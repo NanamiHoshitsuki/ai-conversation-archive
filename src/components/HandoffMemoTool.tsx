@@ -19,12 +19,12 @@ declare global {
   }
 }
 
-const sampleLog = `リサさん:
-AIとの会話を後で見返せる知的資産として残したい。
+const sampleLog = `ユーザー:
+AIとの会話を後で見返せる知識資産として残したい。
 決定事項と次の行動を上に置きたい。
-why_it_matters と business_opportunities も追加したい。
-Google Drive API連携は後回しで、まず同期フォルダ保存にしたい。
-元の会話ログは保存せず、生成後のYAMLだけ保存する。`;
+共通項目は固定し、用途依存の項目は拡張ブロックに分けたい。
+事業家なら business_opportunities、研究者なら research_opportunities、小説家なら story_ideas を使えるようにしたい。
+会話ログそのものではなく、再利用価値のある成果物を保存する仕組みにしたい。`;
 
 function downloadYaml(filename: string, yamlText: string) {
   const blob = new Blob([yamlText], { type: "text/yaml;charset=utf-8" });
@@ -127,8 +127,8 @@ export default function HandoffMemoTool() {
       <header className="border-b border-stone-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">Local first YAML archive</p>
-            <h1 className="mt-1 text-xl font-bold">AI引き継ぎメモ生成</h1>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">Reusable conversation archive</p>
+            <h1 className="mt-1 text-xl font-bold">AI会話知識アーカイブ</h1>
           </div>
           <button
             type="button"

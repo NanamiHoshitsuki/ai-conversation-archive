@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AI引き継ぎメモ生成",
-  description: "会話ログから後日見返すためのYAML引き継ぎメモを生成し、ローカルまたは同期フォルダへ保存するツールです。",
+  title: "AI会話知識アーカイブ",
+  description: "AIとの会話から再利用可能な成果物を抽出し、YAML形式で保存するローカルファーストのアーカイブツールです。",
 };
 
 export default function RootLayout({

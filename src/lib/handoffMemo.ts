@@ -5,14 +5,22 @@ export type HandoffMemo = {
   filename: string;
   date: string;
   summary: string;
+  design_principles: string[];
   decisions: string[];
   next_actions: string[];
   open_questions: string[];
   ideas: string[];
-  business_opportunities: string[];
-  current_themes: string[];
   important_context: string[];
   why_it_matters: string[];
+  extension_blocks: {
+    business_opportunities: string[];
+    research_opportunities: string[];
+    story_ideas: string[];
+    note_ideas: string[];
+    risks: string[];
+    assumptions: string[];
+  };
+  current_themes: string[];
   category: string;
   topic: string;
   type: string;
@@ -24,14 +32,15 @@ const FIELD_ORDER: Array<keyof HandoffMemo> = [
   "filename",
   "date",
   "summary",
+  "design_principles",
   "decisions",
   "next_actions",
   "open_questions",
   "ideas",
-  "business_opportunities",
-  "current_themes",
   "important_context",
   "why_it_matters",
+  "extension_blocks",
+  "current_themes",
   "category",
   "topic",
   "type",
@@ -85,35 +94,38 @@ function pick(lines: string[], keywords: string[], fallback: string[], limit = 5
 }
 
 function inferCategory(text: string) {
-  if (text.includes("占術") || text.includes("鑑定") || text.includes("命式")) return "astrology";
-  if (text.includes("note") || text.includes("記事")) return "content";
+  if (text.includes("研究") || text.includes("論文") || text.includes("実験")) return "research";
+  if (text.includes("小説") || text.includes("物語") || text.includes("創作")) return "creative";
+  if (text.includes("記事") || text.includes("コンテンツ") || text.includes("投稿")) return "content";
   if (text.includes("事業") || text.includes("商品") || text.includes("サービス")) return "business";
-  return "productivity";
+  if (text.includes("実装") || text.includes("アプリ") || text.includes("ツール")) return "productivity";
+  return "knowledge";
 }
 
 function inferTopic(text: string) {
+  if (text.includes("アーカイブ") || text.includes("知識資産")) return "ai-conversation-archive";
   if (text.includes("引き継ぎ") || text.includes("handoff")) return "ai-handoff-memo";
   if (text.includes("コンテキスト")) return "ai-context";
-  if (text.includes("占術")) return "astrology-ai-data";
-  return "conversation-asset";
+  return "reusable-conversation-output";
 }
 
 function inferType(text: string) {
   if (text.includes("仕様") || text.includes("設計") || text.includes("仕組み") || text.includes("システム")) {
     return "system-design";
   }
-  if (text.includes("商品候補") || text.includes("事業機会") || text.includes("business_opportunities")) {
-    return "product-idea";
-  }
+  if (text.includes("研究課題") || text.includes("research_questions")) return "research-note";
+  if (text.includes("物語") || text.includes("story_ideas")) return "creative-note";
+  if (text.includes("商品") || text.includes("事業機会") || text.includes("ビジネス")) return "business-note";
   if (text.includes("実装") || text.includes("API") || text.includes("保存")) return "implementation";
-  return "handoff";
+  return "knowledge-archive";
 }
 
 function inferTitle(text: string, topic: string, type: string) {
-  if (text.includes("AI引き継ぎメモ")) return "AI引き継ぎメモ生成ツール";
+  if (text.includes("AI会話知識アーカイブ")) return "AI会話知識アーカイブ標準フォーマット";
+  if (text.includes("AI引き継ぎメモ")) return "AI会話知識アーカイブ";
   if (topic === "ai-context") return "AIコンテキスト管理";
-  if (type === "system-design") return "知的資産保存システム設計";
-  return "会話ログ知的資産化メモ";
+  if (type === "system-design") return "再利用可能な成果物を保存する仕組み";
+  return "AI会話からの再利用資産抽出";
 }
 
 function dateString(date = new Date()) {
@@ -140,14 +152,20 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
   const type = inferType(text);
   const title = inferTitle(text, topic, type);
   const filename = `${date}_${category}_${topic}_${type}.yaml`;
+  const designPrinciples = [
+    "共通項目は固定する",
+    "用途依存の項目は拡張可能にする",
+    "会話ログではなく再利用可能な成果物を保存する",
+    "半年後に読んでも文脈が復元できる状態を目指す",
+  ];
 
   const decisions = pick(
     lines,
     ["決め", "決定", "とする", "追加", "後回し", "必須にしない", "OK", "優先", "形式"],
     [
-      "Google Drive API/OAuth連携は初期実装では必須にしない",
-      "Google Drive for desktop の同期フォルダにYAMLを保存する方針にする",
-      "元の会話ログは保存せず、生成後のYAMLのみ保存する",
+      "会話全文ではなく再利用可能な成果物をYAMLとして保存する",
+      "決定事項と次の行動を優先して記録する",
+      "用途依存の情報は拡張ブロックとして扱う",
     ],
   );
 
@@ -165,18 +183,18 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
     lines,
     ["未解決", "課題", "疑問", "できる場合", "pushできない", "後回し", "検討"],
     [
-      "ブラウザ環境でフォルダ指定保存が使えない場合の運用をどうするか",
-      "将来Google Drive API/OAuth連携を追加するか",
+      "用途別の拡張ブロックをどこまで標準テンプレートに含めるか",
+      "抽出精度をローカルルールで十分にするか、AI生成APIを使うか",
     ],
   );
 
   const ideas = pick(
     lines,
-    ["アイデア", "仕組み", "知的資産", "検索", "アーカイブ", "note", "コンテキスト"],
+    ["アイデア", "仕組み", "知的資産", "検索", "アーカイブ", "コンテキスト", "再利用"],
     [
-      "AIとの会話を知的資産としてYAML化する",
+      "AIとの会話から再利用可能な成果物を抽出してYAML化する",
       "半年後に見返しても保存理由が分かる構造にする",
-      "過去の思考や決定事項をAI向け追加データとして扱う",
+      "個人利用、業務利用、創作活動、研究活動に横展開できる標準フォーマットにする",
     ],
   );
 
@@ -184,9 +202,54 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
     lines,
     ["ツール", "サービス", "商品", "事業", "候補", "検索", "管理"],
     [
-      "AI引き継ぎメモ生成ツール",
+      "AI会話知識アーカイブツール",
       "YAMLアーカイブ検索",
       "AIコンテキスト管理サービス",
+    ],
+  );
+
+  const researchOpportunities = pick(
+    lines,
+    ["研究", "問い", "仮説", "検証", "実験", "調査", "論文"],
+    [
+      "会話から研究課題や検証仮説を抽出する",
+      "意思決定ログを研究ノートとして再利用する",
+    ],
+  );
+
+  const storyIdeas = pick(
+    lines,
+    ["物語", "小説", "キャラクター", "設定", "プロット", "創作", "シーン"],
+    [
+      "会話内の設定や展開案を創作メモとして保存する",
+      "未使用のプロットやキャラクター案を後で再利用できるようにする",
+    ],
+  );
+
+  const noteIdeas = pick(
+    lines,
+    ["記事", "投稿", "コラム", "発信", "読者", "コンテンツ"],
+    [
+      "会話から記事化できる論点を抽出する",
+      "発信ネタを会話の流れから拾い上げる",
+    ],
+  );
+
+  const risks = pick(
+    lines,
+    ["リスク", "危険", "注意", "違和感", "重くなる", "失敗", "依存"],
+    [
+      "用途依存の項目を標準項目に混ぜると他の利用者に違和感が出る",
+      "会話全文を保存するとノイズや個人情報も残りやすい",
+    ],
+  );
+
+  const assumptions = pick(
+    lines,
+    ["前提", "想定", "なら", "場合", "用途", "初期"],
+    [
+      "初期版はローカル保存を前提にする",
+      "用途に応じて拡張ブロックを追加・削除できるものとする",
     ],
   );
 
@@ -194,9 +257,9 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
     lines,
     ["テーマ", "AI", "会話", "引き継ぎ", "保存", "Google Drive", "同期", "YAML"],
     [
-      "AI会話ログの知的資産化",
-      "Google Drive同期フォルダを使ったローカル保存",
-      "別AIへ引き継げる構造化メモ",
+      "AI会話からの再利用資産抽出",
+      "共通コアと拡張ブロックによるYAML標準化",
+      "後日読んでも文脈が復元できる知識アーカイブ",
     ],
   );
 
@@ -204,27 +267,27 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
     lines,
     ["重要", "前提", "元の会話ログ", "APIキー", "個人情報", "OAuth", "Drive API"],
     [
-      "最初からGoogle Drive APIを使うと認証まわりが重くなる",
-      "同期フォルダ保存ならOAuthなしでDrive反映できる",
-      "APIキーや個人情報はログ出力しない",
+      "保存するのは会話ログそのものではなく、再利用可能な成果物である",
+      "共通コアは用途を問わず読める項目に限定する",
+      "用途依存の内容は拡張ブロックで分離する",
     ],
   );
 
   const whyItMatters = pick(
     lines,
-    ["なぜ", "価値", "埋も", "残せ", "商品候補", "note", "知的資産"],
+    ["なぜ", "価値", "埋も", "残せ", "再利用", "知的資産", "文脈"],
     [
-      "noteネタが会話の中で埋もれる問題を解決する",
-      "AIとの会話を知的資産として残せる",
-      "商品候補や事業機会を会話の流れから拾い上げられる",
+      "会話の中で生まれた決定、課題、アイデアを埋もれさせない",
+      "AIとの会話を再利用可能な知識資産として残せる",
+      "半年後に見返しても、なぜ保存したのかが分かる",
     ],
   );
 
   const summary = unique([
-    "ChatGPTなどの会話ログを貼り付け、後日見返すためのYAMLメモを生成するローカル保存版ツールを設計している。",
-    "初期実装ではGoogle Drive API/OAuthを使わず、Google Drive for desktop の同期フォルダへYAMLを保存する方針。",
-    "保存対象は生成後のYAMLのみで、元の会話ログやAPIキー、個人情報は保存・ログ出力しない。",
-    "決定事項、次の行動、保存理由、事業機会を上位項目として残す。",
+    "AIとの会話を単なるログではなく、後日再利用できる知識資産として保存するためのYAML形式を設計している。",
+    "重要なのは会話全文の保存ではなく、決定事項、次の行動、未解決課題、アイデア、保存価値を残すことである。",
+    "個人利用、業務利用、創作活動、研究活動など、用途を問わず再利用可能な成果物として扱う。",
+    "共通コアは固定し、事業機会、研究課題、創作案などの用途依存項目は拡張ブロックで扱う。",
   ])
     .slice(0, 4)
     .join("\n");
@@ -233,8 +296,8 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
     "ai",
     "handoff",
     "yaml",
-    "google-drive",
-    "local-first",
+    "knowledge-archive",
+    "reusable-output",
     "context-management",
     "knowledge-asset",
     category,
@@ -247,14 +310,22 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
     filename,
     date,
     summary,
+    design_principles: designPrinciples,
     decisions,
     next_actions: nextActions,
     open_questions: openQuestions,
     ideas,
-    business_opportunities: businessOpportunities,
-    current_themes: currentThemes,
     important_context: importantContext,
     why_it_matters: whyItMatters,
+    extension_blocks: {
+      business_opportunities: businessOpportunities,
+      research_opportunities: researchOpportunities,
+      story_ideas: storyIdeas,
+      note_ideas: noteIdeas,
+      risks,
+      assumptions,
+    },
+    current_themes: currentThemes,
     category,
     topic,
     type,
