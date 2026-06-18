@@ -19,6 +19,7 @@ type WritableDirectoryHandle = {
   requestPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<PermissionState>;
   getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<WritableDirectoryHandle>;
   getFileHandle(name: string, options?: { create?: boolean }): Promise<{
+    getFile?: () => Promise<File>;
     createWritable(): Promise<{
       write(data: string): Promise<void>;
       close(): Promise<void>;
@@ -59,6 +60,20 @@ type SourceInfo = {
 const DIRECTORY_DB_NAME = "ai-conversation-archive";
 const DIRECTORY_STORE_NAME = "settings";
 const DIRECTORY_HANDLE_KEY = "directoryHandle";
+const EMPTY_CONTENT_MESSAGE = "保存する内容が空です。YAMLまたはMarkdownを読み込んでから保存してください。";
+const FOLDER_SAVE_FAILURE_MESSAGE = [
+  "フォルダ保存に失敗しました。",
+  "",
+  "Google Drive / OneDrive / iCloud Drive などの同期・マウントフォルダでは、ブラウザのフォルダ保存機能が正常に書き込めない場合があります。",
+  "",
+  "0 byte ファイルが残ることがあります。その場合は削除して、ブラウザの「ダウンロード保存」を使ってください。",
+].join("\n");
+const ZERO_BYTE_WARNING_MESSAGE = [
+  "フォルダ保存後のファイルサイズが0 byteです。",
+  "",
+  "Google Drive / OneDrive / iCloud Drive などの同期・マウントフォルダでは書き込みが完了しない場合があります。",
+  "0 byte ファイルを削除して、ブラウザの「ダウンロード保存」を使ってください。",
+].join("\n");
 
 function downloadTextFile(filename: string, text: string, type = "text/plain;charset=utf-8") {
   const blob = new Blob([text], { type });
@@ -224,12 +239,23 @@ function getSourceOnlyDownloadFilename(date = new Date()) {
   return `${year}-${month}-${day}_source-conversation.md`;
 }
 
+async function warnIfWrittenFileIsEmpty(fileHandle: { getFile?: () => Promise<File> }) {
+  if (!fileHandle.getFile) return false;
+  try {
+    const file = await fileHandle.getFile();
+    return file.size === 0;
+  } catch {
+    return false;
+  }
+}
+
 async function writeYamlToDirectory(directory: WritableDirectoryHandle, memo: HandoffMemo, yamlText: string) {
   const monthDirectory = await directory.getDirectoryHandle(getMemoMonthFolder(memo), { create: true });
   const fileHandle = await monthDirectory.getFileHandle(getYamlDownloadFilename(yamlText), { create: true });
   const writable = await fileHandle.createWritable();
   await writable.write(yamlText);
   await writable.close();
+  return warnIfWrittenFileIsEmpty(fileHandle);
 }
 
 async function writeYamlTextToDirectory(directory: WritableDirectoryHandle, yamlText: string, monthFolder: string) {
@@ -238,6 +264,7 @@ async function writeYamlTextToDirectory(directory: WritableDirectoryHandle, yaml
   const writable = await fileHandle.createWritable();
   await writable.write(yamlText);
   await writable.close();
+  return warnIfWrittenFileIsEmpty(fileHandle);
 }
 
 async function writeTextToDirectory(directory: WritableDirectoryHandle, filename: string, text: string, monthFolder: string) {
@@ -246,6 +273,7 @@ async function writeTextToDirectory(directory: WritableDirectoryHandle, filename
   const writable = await fileHandle.createWritable();
   await writable.write(text);
   await writable.close();
+  return warnIfWrittenFileIsEmpty(fileHandle);
 }
 
 export default function HandoffMemoTool() {
@@ -458,8 +486,8 @@ export default function HandoffMemoTool() {
 
   async function saveSourceLogFile() {
     const nextSourceLog = mergeSourceMetadataIntoMarkdown(sourceLogText, sourceInfo).trim();
-    if (!nextSourceLog) {
-      setStatus("保存する会話ログを貼り付けてください。");
+    if (!sourceLogText.trim() || !nextSourceLog) {
+      setStatus(EMPTY_CONTENT_MESSAGE);
       return;
     }
 
@@ -471,11 +499,16 @@ export default function HandoffMemoTool() {
           setStatus("保存先フォルダへのアクセスが許可されていません。");
           return;
         }
-        await writeTextToDirectory(directoryHandle, filename, nextSourceLog, monthFolder);
+        const isEmptyFile = await writeTextToDirectory(directoryHandle, filename, nextSourceLog, monthFolder);
+        if (isEmptyFile) {
+          setStatus(ZERO_BYTE_WARNING_MESSAGE);
+          return;
+        }
         setStatus(`${monthFolder}/${filename} に保存しました。`);
         return;
       } catch {
-        setStatus("フォルダ保存に失敗しました。ダウンロード保存に切り替えます。");
+        setStatus(FOLDER_SAVE_FAILURE_MESSAGE);
+        return;
       }
     }
 
@@ -489,17 +522,22 @@ export default function HandoffMemoTool() {
       return;
     }
 
+    if (!yamlText.trim() && (activeInputTab === "memo-save" || !conversationLog.trim())) {
+      setStatus(EMPTY_CONTENT_MESSAGE);
+      return;
+    }
+
     let nextMemo = activeInputTab === "memo-save" ? null : memo;
     let nextYaml = mergeSourceMetadataIntoYaml(yamlText, sourceInfo);
     const isPastedYaml = activeInputTab === "memo-save";
 
-    if (!nextYaml) {
+    if (!nextYaml.trim()) {
       if (isPastedYaml) {
-        setStatus("保存する知識メモを貼り付けてください。");
+        setStatus(EMPTY_CONTENT_MESSAGE);
         return;
       }
       if (!conversationLog.trim()) {
-        setStatus("会話ログを貼り付けてください。");
+        setStatus(EMPTY_CONTENT_MESSAGE);
         return;
       }
       const generated = buildBulkMemo(conversationLog.trim());
@@ -518,16 +556,23 @@ export default function HandoffMemoTool() {
           return;
         }
         const monthFolder = nextMemo ? getMemoMonthFolder(nextMemo) : formatMarkdownTimestamp().slice(0, 7);
+        let isEmptyFile = false;
         if (nextMemo) {
-          await writeYamlToDirectory(directoryHandle, nextMemo, nextYaml);
+          isEmptyFile = await writeYamlToDirectory(directoryHandle, nextMemo, nextYaml);
         } else {
-          await writeYamlTextToDirectory(directoryHandle, nextYaml, monthFolder);
+          isEmptyFile = await writeYamlTextToDirectory(directoryHandle, nextYaml, monthFolder);
+        }
+        if (isEmptyFile) {
+          setYamlText(nextYaml);
+          setStatus(ZERO_BYTE_WARNING_MESSAGE);
+          return;
         }
         setYamlText(nextYaml);
         setStatus(`${monthFolder}/${getYamlDownloadFilename(nextYaml)} に保存しました。`);
         return;
       } catch {
-        setStatus("フォルダ保存に失敗しました。ダウンロード保存に切り替えます。");
+        setStatus(FOLDER_SAVE_FAILURE_MESSAGE);
+        return;
       }
     }
 
@@ -718,7 +763,7 @@ export default function HandoffMemoTool() {
                 >
                   しおりプロンプトをコピー
                 </button>
-                <p className="mt-2 text-xs font-semibold text-stone-600">{status || "待機中"}</p>
+                <p className="mt-2 whitespace-pre-wrap text-xs font-semibold leading-5 text-stone-600">{status || "待機中"}</p>
               </div>
             )}
 
@@ -765,7 +810,7 @@ export default function HandoffMemoTool() {
               </div>
               <div className="rounded-md border border-stone-200 bg-white p-4">
                 <p className="text-xs font-semibold text-stone-500">status</p>
-                <p className="mt-2 text-sm font-bold">{status || "待機中"}</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm font-bold leading-6">{status || "待機中"}</p>
               </div>
             </div>
           )}
@@ -857,6 +902,9 @@ export default function HandoffMemoTool() {
               </p>
               <p className="mt-2 text-stone-500">
                 フォルダ指定に未対応のブラウザでは、ダウンロード保存を使います。
+              </p>
+              <p className="mt-2 text-stone-500">
+                Google Driveなどの同期フォルダへ保存する場合、フォルダ保存が失敗することがあります。その場合は「ダウンロード」を使い、ブラウザの保存先をGoogle Drive同期フォルダに設定してください。
               </p>
             </div>
           )}
