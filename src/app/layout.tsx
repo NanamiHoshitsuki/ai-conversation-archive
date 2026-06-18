@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "AI会話知識アーカイブ",
-  description: "AIとの会話から再利用可能な成果物を抽出し、YAML形式で保存するローカルファーストのアーカイブツールです。",
+  description: "AIとの会話から再利用可能な知識メモを抽出して保存するローカルファーストのアーカイブツールです。",
 };
 
 export default function RootLayout({

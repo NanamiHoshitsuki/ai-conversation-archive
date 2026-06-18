@@ -8,7 +8,7 @@ export type HandoffMemo = {
     source_mode: "bulk-convert" | "chat-save";
     conversation_id?: string | null;
     source_log_file?: string | null;
-    trigger_command?: "/archive" | "/保存";
+    trigger_command?: "/archive" | "/保存" | "/保存+元ログ" | "/archive-full";
     saved_at: string;
     anchor_text?: string;
     message_index?: number;
@@ -126,12 +126,10 @@ function compactText(input: string) {
     .replace(/\r\n/g, "\n")
     .split("\n")
     .map((line) => line.trim())
-    .filter(
-      (line) =>
-        line &&
-        !parseArchiveCommand(line) &&
-        !STOP_PREFIXES.some((prefix) => line.startsWith(prefix)),
-    )
+    .filter((line) => {
+      const commandCandidate = line.replace(/^(ユーザー|AI|user|assistant)\s*[:：]\s*/i, "").trim();
+      return line && !parseArchiveCommand(commandCandidate) && !STOP_PREFIXES.some((prefix) => line.startsWith(prefix));
+    })
     .join("\n");
 }
 
@@ -302,10 +300,19 @@ export function getSourceLogDownloadFilename(yamlText: string, fallbackDate = ne
   return getSourceLogFilenameFromYamlFilename(getYamlDownloadFilename(yamlText, fallbackDate));
 }
 
-export type ArchiveCommand = {
-  command: "archive";
-  trigger: "/archive" | "/保存";
-};
+export type ArchiveCommand =
+  | {
+      command: "archive";
+      trigger: "/archive" | "/保存";
+    }
+  | {
+      command: "source-log";
+      trigger: "/元ログ";
+    }
+  | {
+      command: "archive-full";
+      trigger: "/保存+元ログ" | "/archive-full";
+    };
 
 export function parseArchiveCommand(input: string): ArchiveCommand | null {
   const trimmed = input.trim();
@@ -314,6 +321,15 @@ export function parseArchiveCommand(input: string): ArchiveCommand | null {
   }
   if (trimmed === "/保存") {
     return { command: "archive", trigger: "/保存" };
+  }
+  if (trimmed === "/元ログ") {
+    return { command: "source-log", trigger: "/元ログ" };
+  }
+  if (trimmed === "/保存+元ログ") {
+    return { command: "archive-full", trigger: "/保存+元ログ" };
+  }
+  if (trimmed === "/archive-full") {
+    return { command: "archive-full", trigger: "/archive-full" };
   }
   return null;
 }
