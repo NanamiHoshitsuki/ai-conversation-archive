@@ -4,8 +4,13 @@ export type HandoffMemo = {
   title: string;
   filename: string;
   date: string;
+  source?: {
+    source_mode: "bulk-convert" | "chat-save";
+    trigger_command?: "/archive" | "/保存";
+    saved_at: string;
+    anchor_text?: string;
+  };
   summary: string;
-  design_principles: string[];
   decisions: string[];
   next_actions: string[];
   open_questions: string[];
@@ -22,12 +27,45 @@ export type HandoffMemo = {
   content_ideas?: string[];
 };
 
+export const HANDOFF_MEMO_SYSTEM_PROMPT = `
+あなたはAI会話知識アーカイブのYAML生成器です。
+
+目的:
+- AIとの会話を再利用可能な知的資産としてYAML化する。
+- 会話全文をそのまま保存せず、後日見返す・別AIへ引き継ぐ・成果物として再利用するための情報へ圧縮する。
+
+抽出方針:
+- 決定事項、次アクション、未解決事項、重要な文脈、再利用用途を優先する。
+- /archive や /保存 などの保存コマンド自体はYAML対象から除外する。
+- 不確かな内容は断定しない。
+- 会話に存在しない情報を補完しない。
+- 必要な項目がない場合は空配列または省略で対応する。
+- business_opportunities / research_questions / content_ideas は該当内容がある場合のみ出力する。
+
+基本項目:
+- title
+- filename
+- date
+- summary
+- decisions
+- next_actions
+- open_questions
+- ideas
+- important_context
+- why_it_matters
+- category
+- topic
+- type
+- tags
+- reuse_for
+`.trim();
+
 const FIELD_ORDER: Array<keyof HandoffMemo> = [
   "title",
   "filename",
   "date",
+  "source",
   "summary",
-  "design_principles",
   "decisions",
   "next_actions",
   "open_questions",
@@ -43,6 +81,15 @@ const FIELD_ORDER: Array<keyof HandoffMemo> = [
   "research_questions",
   "content_ideas",
 ];
+
+type HandoffMemoSource = NonNullable<HandoffMemo["source"]>;
+
+export type GenerateHandoffMemoOptions = {
+  source?: Omit<HandoffMemoSource, "saved_at"> & {
+    saved_at?: string;
+  };
+  systemPrompt?: string;
+};
 
 const STOP_PREFIXES = [
   "```",
@@ -72,7 +119,12 @@ function compactText(input: string) {
     .replace(/\r\n/g, "\n")
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line && !STOP_PREFIXES.some((prefix) => line.startsWith(prefix)))
+    .filter(
+      (line) =>
+        line &&
+        !parseArchiveCommand(line) &&
+        !STOP_PREFIXES.some((prefix) => line.startsWith(prefix)),
+    )
     .join("\n");
 }
 
@@ -142,23 +194,58 @@ function monthString(date: string) {
   return date.slice(0, 7);
 }
 
+function timestampString(date = new Date()) {
+  return date.toISOString();
+}
+
+function getAnchorText(text: string) {
+  const compacted = compactText(text);
+  if (!compacted) return undefined;
+  return compacted.slice(0, 160);
+}
+
+function buildSource(
+  text: string,
+  now: Date,
+  source?: GenerateHandoffMemoOptions["source"],
+): HandoffMemoSource | undefined {
+  if (!source) return undefined;
+
+  const result: HandoffMemoSource = {
+    source_mode: source.source_mode,
+    saved_at: source.saved_at ?? timestampString(now),
+  };
+  if (source.trigger_command) result.trigger_command = source.trigger_command;
+  const anchorText = source.anchor_text ?? getAnchorText(text);
+  if (anchorText) result.anchor_text = anchorText;
+  return result;
+}
+
 export function getMemoMonthFolder(memo: Pick<HandoffMemo, "date">) {
   return monthString(memo.date);
 }
 
 export type ArchiveCommand = {
   command: "archive";
+  trigger: "/archive" | "/保存";
 };
 
 export function parseArchiveCommand(input: string): ArchiveCommand | null {
   const trimmed = input.trim();
-  if (trimmed === "/archive" || trimmed === "/保存") {
-    return { command: "archive" };
+  if (trimmed === "/archive") {
+    return { command: "archive", trigger: "/archive" };
+  }
+  if (trimmed === "/保存") {
+    return { command: "archive", trigger: "/保存" };
   }
   return null;
 }
 
-export function generateHandoffMemo(input: string, now = new Date()): HandoffMemo {
+export function generateHandoffMemo(
+  input: string,
+  now = new Date(),
+  options: GenerateHandoffMemoOptions = {},
+): HandoffMemo {
   const text = input.trim();
   const lines = splitCandidates(text);
   const date = dateString(now);
@@ -167,12 +254,11 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
   const type = inferType(text);
   const title = inferTitle(text, topic, type);
   const filename = `${date}_${category}_${topic}_${type}.yaml`;
-  const designPrinciples = [
-    "共通項目は固定する",
-    "用途依存の項目は拡張可能にする",
-    "会話ログではなく再利用可能な成果物を保存する",
-    "半年後に読んでも文脈が復元できる状態を目指す",
-  ];
+  const systemPrompt = options.systemPrompt ?? HANDOFF_MEMO_SYSTEM_PROMPT;
+  const allowConditionalFields =
+    systemPrompt.includes("business_opportunities") &&
+    systemPrompt.includes("research_questions") &&
+    systemPrompt.includes("content_ideas");
 
   const decisions = pick(
     lines,
@@ -297,8 +383,8 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
     title,
     filename,
     date,
+    source: buildSource(text, now, options.source),
     summary,
-    design_principles: designPrinciples,
     decisions,
     next_actions: nextActions,
     open_questions: openQuestions,
@@ -312,9 +398,9 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
     reuse_for: reuseFor,
   };
 
-  if (businessOpportunities) memo.business_opportunities = businessOpportunities;
-  if (researchQuestions) memo.research_questions = researchQuestions;
-  if (contentIdeas) memo.content_ideas = contentIdeas;
+  if (allowConditionalFields && businessOpportunities) memo.business_opportunities = businessOpportunities;
+  if (allowConditionalFields && researchQuestions) memo.research_questions = researchQuestions;
+  if (allowConditionalFields && contentIdeas) memo.content_ideas = contentIdeas;
 
   return memo;
 }

@@ -75,7 +75,11 @@ export default function HandoffMemoTool() {
       return;
     }
 
-    const nextMemo = generateHandoffMemo(source);
+    const nextMemo = generateHandoffMemo(source, new Date(), {
+      source: {
+        source_mode: "bulk-convert",
+      },
+    });
     const nextYaml = memoToYaml(nextMemo);
     setMemo(nextMemo);
     setYamlText(nextYaml);
@@ -86,14 +90,19 @@ export default function HandoffMemoTool() {
     return messages.map((message) => `${message.role === "user" ? "ユーザー" : "AI"}: ${message.text}`).join("\n");
   }
 
-  function archiveChatHistory(messages: ChatMessage[]) {
+  function archiveChatHistory(messages: ChatMessage[], triggerCommand: "/archive" | "/保存") {
     const transcript = buildChatTranscript(messages);
     if (messages.length < 2 || transcript.length < 60) {
       setStatus("保存できる内容が不足しています。");
       return;
     }
 
-    const nextMemo = generateHandoffMemo(transcript);
+    const nextMemo = generateHandoffMemo(transcript, new Date(), {
+      source: {
+        source_mode: "chat-save",
+        trigger_command: triggerCommand,
+      },
+    });
     const nextYaml = memoToYaml(nextMemo);
     setMemo(nextMemo);
     setYamlText(nextYaml);
@@ -106,7 +115,7 @@ export default function HandoffMemoTool() {
 
     const command = parseArchiveCommand(text);
     if (command) {
-      archiveChatHistory(chatMessages);
+      archiveChatHistory(chatMessages, command.trigger);
       setChatMessages((messages) => [
         ...messages,
         {
@@ -155,7 +164,11 @@ export default function HandoffMemoTool() {
         setStatus("会話ログを貼り付けてください。");
         return;
       }
-      nextMemo = generateHandoffMemo(conversationLog);
+      nextMemo = generateHandoffMemo(conversationLog, new Date(), {
+        source: {
+          source_mode: "bulk-convert",
+        },
+      });
       nextYaml = memoToYaml(nextMemo);
       setMemo(nextMemo);
       setYamlText(nextYaml);
