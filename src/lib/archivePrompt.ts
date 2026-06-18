@@ -88,15 +88,16 @@ search_terms:
 YAML知識メモの出力形式:
 - YAMLだけをコードブロックで出力する。
 - filename を必ず入れる。
-- filename は YYYY-MM-DD-HHMM_topic_type.yaml の形にする。
-- topic には内容が分かる短い英数字語を入れる。
+- filename は source.conversation_title を優先し、YYYY-MM-DD_会話タイトル.yaml の形にする。
+- 英数字変換は行わず、日本語の会話タイトルをそのまま使う。
+- ファイル名に使えない記号だけ避ける。
 - source、bookmark、search_terms は上部に置く。
 - 会話全文をそのまま保存せず、決定事項、次アクション、未解決事項、重要文脈、再利用用途を抽出する。
 - 最低限、source、bookmark、search_terms、summary、decisions、next_actions は必ず出力する。
 
 YAMLテンプレート:
 title: "アーカイブ名"
-filename: "YYYY-MM-DD-HHMM_topic_archive.yaml"
+filename: "YYYY-MM-DD_会話タイトル.yaml"
 date: "YYYY-MM-DD"
 source:
   platform: ""

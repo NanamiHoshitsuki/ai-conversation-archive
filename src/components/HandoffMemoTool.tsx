@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import yaml from "js-yaml";
 import { SHIORI_ARCHIVE_PROMPT } from "@/lib/archivePrompt";
 import {
+  buildConversationTitleFilename,
   generateHandoffMemo,
   getMemoMonthFolder,
   getSourceLogDownloadFilename,
@@ -51,10 +52,10 @@ type InputTab = "memo-save" | "log-save" | "prompt" | "memo-create";
 
 type SourceInfo = {
   platform: string;
-  title: string;
+  conversationTitle: string;
   conversationUrl: string;
   savedAt: string;
-  userNote: string;
+  bookmark: string;
 };
 
 const DIRECTORY_DB_NAME = "ai-conversation-archive";
@@ -172,41 +173,107 @@ function formatSourceTimestamp(date = new Date()) {
 function buildSourceMetadata(sourceInfo: SourceInfo) {
   const source: Record<string, string> = {};
   if (sourceInfo.platform.trim()) source.platform = sourceInfo.platform.trim();
-  if (sourceInfo.title.trim()) source.title = sourceInfo.title.trim();
+  if (sourceInfo.conversationTitle.trim()) source.conversation_title = sourceInfo.conversationTitle.trim();
   if (sourceInfo.conversationUrl.trim()) source.conversation_url = sourceInfo.conversationUrl.trim();
   if (sourceInfo.savedAt.trim()) source.saved_at = sourceInfo.savedAt.trim();
-  if (sourceInfo.userNote.trim()) source.user_note = sourceInfo.userNote.trim();
   return source;
+}
+
+function buildBookmarkMetadata(sourceInfo: SourceInfo) {
+  if (!sourceInfo.bookmark.trim()) return null;
+  return {
+    summary: sourceInfo.bookmark.trim(),
+  };
+}
+
+function getFilenameDate(sourceInfo: SourceInfo) {
+  const match = sourceInfo.savedAt.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return new Date();
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+function getConversationTitleFilename(sourceInfo: SourceInfo) {
+  if (!sourceInfo.conversationTitle.trim()) return "";
+  return buildConversationTitleFilename(sourceInfo.conversationTitle, getFilenameDate(sourceInfo));
 }
 
 function sourceMetadataLines(sourceInfo: SourceInfo) {
   const source = buildSourceMetadata(sourceInfo);
   const lines = [`saved_at: ${source.saved_at ?? formatSourceTimestamp()}`];
   if (source.platform) lines.push(`platform: ${source.platform}`);
-  if (source.title) lines.push(`title: ${source.title}`);
+  if (source.conversation_title) lines.push(`conversation_title: ${source.conversation_title}`);
   if (source.conversation_url) lines.push(`conversation_url: ${source.conversation_url}`);
-  if (source.user_note) lines.push(`user_note: ${source.user_note}`);
+  if (sourceInfo.bookmark.trim()) lines.push(`bookmark: ${sourceInfo.bookmark.trim()}`);
   return lines;
 }
 
 function mergeSourceMetadataIntoYaml(yamlText: string, sourceInfo: SourceInfo) {
   const sourceMetadata = buildSourceMetadata(sourceInfo);
-  if (Object.keys(sourceMetadata).length === 0) return yamlText;
+  const bookmarkMetadata = buildBookmarkMetadata(sourceInfo);
 
   try {
     const parsed = yaml.load(yamlText);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return yamlText;
-    const existingSource =
-      "source" in parsed && parsed.source && typeof parsed.source === "object" && !Array.isArray(parsed.source)
-        ? (parsed.source as Record<string, unknown>)
+    const parsedRecord = parsed as Record<string, unknown>;
+    const existingSource = {
+      ...("source" in parsedRecord &&
+      parsedRecord.source &&
+      typeof parsedRecord.source === "object" &&
+      !Array.isArray(parsedRecord.source)
+        ? (parsedRecord.source as Record<string, unknown>)
+        : {}),
+    };
+    const legacyConversationTitle = typeof existingSource.title === "string" ? existingSource.title.trim() : "";
+    const legacyBookmark = typeof existingSource.user_note === "string" ? existingSource.user_note.trim() : "";
+    delete existingSource.title;
+    delete existingSource.user_note;
+
+    const nextSourceMetadata = {
+      ...sourceMetadata,
+      ...(!sourceMetadata.conversation_title && legacyConversationTitle
+        ? { conversation_title: legacyConversationTitle }
+        : {}),
+    };
+    const nextBookmarkMetadata =
+      bookmarkMetadata ??
+      (legacyBookmark
+        ? {
+            summary: legacyBookmark,
+          }
+        : null);
+    const filenameTitle =
+      sourceInfo.conversationTitle.trim() ||
+      (typeof nextSourceMetadata.conversation_title === "string" ? nextSourceMetadata.conversation_title : "");
+    const conversationTitleFilename = filenameTitle
+      ? buildConversationTitleFilename(filenameTitle, getFilenameDate(sourceInfo))
+      : "";
+    const hasMetadataUpdate =
+      Object.keys(nextSourceMetadata).length > 0 || nextBookmarkMetadata || conversationTitleFilename || legacyConversationTitle || legacyBookmark;
+    if (!hasMetadataUpdate) return yamlText;
+
+    const existingBookmark =
+      "bookmark" in parsedRecord &&
+      parsedRecord.bookmark &&
+      typeof parsedRecord.bookmark === "object" &&
+      !Array.isArray(parsedRecord.bookmark)
+        ? (parsedRecord.bookmark as Record<string, unknown>)
         : {};
     return yaml.dump(
       {
-        ...(parsed as Record<string, unknown>),
+        ...parsedRecord,
+        ...(conversationTitleFilename ? { filename: conversationTitleFilename } : {}),
         source: {
           ...existingSource,
-          ...sourceMetadata,
+          ...nextSourceMetadata,
         },
+        ...(nextBookmarkMetadata
+          ? {
+              bookmark: {
+                ...existingBookmark,
+                ...nextBookmarkMetadata,
+              },
+            }
+          : {}),
       },
       {
         lineWidth: 120,
@@ -291,15 +358,19 @@ export default function HandoffMemoTool() {
   const [activeOutputTab, setActiveOutputTab] = useState<OutputTab>("yaml");
   const [sourceInfo, setSourceInfo] = useState<SourceInfo>(() => ({
     platform: "ChatGPT",
-    title: "",
+    conversationTitle: "",
     conversationUrl: "",
     savedAt: formatSourceTimestamp(),
-    userNote: "",
+    bookmark: "",
   }));
-  const currentYamlFilename = yamlText ? getYamlDownloadFilename(yamlText) : "";
-  const currentSourceLogFilename = sourceLogFilename || getSourceOnlyDownloadFilename();
+  const conversationTitleFilename = getConversationTitleFilename(sourceInfo);
+  const previewYamlText = yamlText ? mergeSourceMetadataIntoYaml(yamlText, sourceInfo) : "";
+  const currentYamlFilename = previewYamlText ? getYamlDownloadFilename(previewYamlText) : "";
+  const currentSourceLogFilename = conversationTitleFilename
+    ? getSourceLogFilenameFromYamlFilename(conversationTitleFilename)
+    : sourceLogFilename || getSourceOnlyDownloadFilename();
   const activeFilename =
-    activeInputTab === "log-save" ? currentSourceLogFilename : memo?.filename ?? (currentYamlFilename || "未生成");
+    activeInputTab === "log-save" ? currentSourceLogFilename : currentYamlFilename || memo?.filename || "未生成";
 
   function selectInputTab(tab: InputTab) {
     setActiveInputTab(tab);
@@ -692,7 +763,7 @@ export default function HandoffMemoTool() {
                   知識メモ保存（YAML）
                 </label>
                 <p className="mt-1 text-sm leading-6 text-stone-600">
-                  ChatGPT、Claude、Geminiなどで生成した知識メモを貼り付けて保存します。filename が含まれる場合はその名前で保存します。
+                  ChatGPT、Claude、Geminiなどで生成した知識メモを貼り付けて保存します。conversation_title を入力すると YYYY-MM-DD_会話タイトル.yaml で保存します。
                 </p>
                 <textarea
                   id="memo-save-input"
@@ -913,7 +984,7 @@ export default function HandoffMemoTool() {
             <div className="rounded-md border border-stone-200 bg-stone-50 p-3">
               <p className="text-sm font-bold text-stone-950">保存情報入力欄</p>
               <p className="mt-1 text-xs leading-5 text-stone-500">
-                元のチャットを後から見つけやすくするための任意情報です。空欄でも従来通り保存できます。
+                元のチャットを後から見つけやすくするための任意情報です。conversation_title は日本語のままファイル名に使います。
               </p>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <div>
@@ -942,12 +1013,12 @@ export default function HandoffMemoTool() {
                 </div>
                 <div>
                   <label htmlFor="source-title" className="text-xs font-bold text-stone-600">
-                    title
+                    conversation_title
                   </label>
                   <input
                     id="source-title"
-                    value={sourceInfo.title}
-                    onChange={(event) => updateSourceInfo("title", event.target.value)}
+                    value={sourceInfo.conversationTitle}
+                    onChange={(event) => updateSourceInfo("conversationTitle", event.target.value)}
                     className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
                     placeholder="AI会話アーカイブ設計"
                   />
@@ -967,14 +1038,14 @@ export default function HandoffMemoTool() {
               </div>
               <div className="mt-3">
                 <label htmlFor="source-note" className="text-xs font-bold text-stone-600">
-                  user_note
+                  bookmark
                 </label>
                 <textarea
                   id="source-note"
-                  value={sourceInfo.userNote}
-                  onChange={(event) => updateSourceInfo("userNote", event.target.value)}
+                  value={sourceInfo.bookmark}
+                  onChange={(event) => updateSourceInfo("bookmark", event.target.value)}
                   className="mt-1 min-h-20 w-full resize-y rounded-md border border-stone-300 bg-white p-3 text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                  placeholder="どのチャットだったか思い出すためのメモ"
+                  placeholder="どのチャットだったか思い出すためのしおりメモ"
                 />
               </div>
             </div>

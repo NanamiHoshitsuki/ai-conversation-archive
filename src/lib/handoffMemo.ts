@@ -10,10 +10,9 @@ export type HandoffMemo = {
     source_log_file?: string | null;
     trigger_command?: "/archive" | "/アーカイブ" | "/保存" | "/log" | "/ログ" | "/元ログ" | "/保存+元ログ" | "/archive-full";
     platform?: string;
-    title?: string;
+    conversation_title?: string;
     conversation_url?: string;
     saved_at: string;
-    user_note?: string;
     anchor_text?: string;
     message_index?: number;
     captured_range?: {
@@ -253,9 +252,8 @@ function buildSource(
       };
   const anchorText = source.anchor_text ?? getAnchorText(text);
   if (source.platform?.trim()) result.platform = source.platform.trim();
-  if (source.title?.trim()) result.title = source.title.trim();
+  if (source.conversation_title?.trim()) result.conversation_title = source.conversation_title.trim();
   if (source.conversation_url?.trim()) result.conversation_url = source.conversation_url.trim();
-  if (source.user_note?.trim()) result.user_note = source.user_note.trim();
   if (anchorText) result.anchor_text = anchorText;
   if (typeof source.message_index === "number") result.message_index = source.message_index;
   if (source.captured_range) result.captured_range = source.captured_range;
@@ -268,6 +266,21 @@ export function getMemoMonthFolder(memo: Pick<HandoffMemo, "date">) {
 
 export function getFallbackMemoFilename(now = new Date()) {
   return `${dateString(now)}_ai-handoff-memo.yaml`;
+}
+
+export function sanitizeArchiveFilenameTitle(title: string) {
+  return title
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/[\u0000-\u001f]/g, "")
+    .replace(/\s+/g, " ")
+    .slice(0, 80);
+}
+
+export function buildConversationTitleFilename(conversationTitle: string, date = new Date()) {
+  const safeTitle = sanitizeArchiveFilenameTitle(conversationTitle);
+  if (!safeTitle) return getFallbackMemoFilename(date);
+  return `${dateString(date)}_${safeTitle}.yaml`;
 }
 
 export function getYamlDownloadFilename(yamlText: string, fallbackDate = new Date()) {
@@ -363,7 +376,9 @@ export function generateHandoffMemo(
   const topic = inferTopic(text);
   const type = inferType(text);
   const title = inferTitle(text, topic, type);
-  const filename = `${date}_${category}_${topic}_${type}.yaml`;
+  const filename = options.source?.conversation_title?.trim()
+    ? buildConversationTitleFilename(options.source.conversation_title, now)
+    : `${date}_${category}_${topic}_${type}.yaml`;
   const systemPrompt = options.systemPrompt ?? HANDOFF_MEMO_SYSTEM_PROMPT;
   const allowConditionalFields =
     systemPrompt.includes("business_opportunities") &&
