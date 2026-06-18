@@ -8,8 +8,12 @@ export type HandoffMemo = {
     source_mode: "bulk-convert" | "chat-save";
     conversation_id?: string | null;
     source_log_file?: string | null;
-    trigger_command?: "/archive" | "/保存" | "/保存+元ログ" | "/archive-full";
+    trigger_command?: "/archive" | "/アーカイブ" | "/保存" | "/log" | "/ログ" | "/元ログ" | "/保存+元ログ" | "/archive-full";
+    platform?: string;
+    title?: string;
+    conversation_url?: string;
     saved_at: string;
+    user_note?: string;
     anchor_text?: string;
     message_index?: number;
     captured_range?: {
@@ -248,6 +252,10 @@ function buildSource(
         saved_at: source.saved_at ?? timestampString(now),
       };
   const anchorText = source.anchor_text ?? getAnchorText(text);
+  if (source.platform?.trim()) result.platform = source.platform.trim();
+  if (source.title?.trim()) result.title = source.title.trim();
+  if (source.conversation_url?.trim()) result.conversation_url = source.conversation_url.trim();
+  if (source.user_note?.trim()) result.user_note = source.user_note.trim();
   if (anchorText) result.anchor_text = anchorText;
   if (typeof source.message_index === "number") result.message_index = source.message_index;
   if (source.captured_range) result.captured_range = source.captured_range;
@@ -303,11 +311,11 @@ export function getSourceLogDownloadFilename(yamlText: string, fallbackDate = ne
 export type ArchiveCommand =
   | {
       command: "archive";
-      trigger: "/archive" | "/保存";
+      trigger: "/archive" | "/アーカイブ" | "/保存";
     }
   | {
       command: "source-log";
-      trigger: "/元ログ";
+      trigger: "/log" | "/ログ" | "/元ログ";
     }
   | {
       command: "archive-full";
@@ -319,8 +327,17 @@ export function parseArchiveCommand(input: string): ArchiveCommand | null {
   if (trimmed === "/archive") {
     return { command: "archive", trigger: "/archive" };
   }
+  if (trimmed === "/アーカイブ") {
+    return { command: "archive", trigger: "/アーカイブ" };
+  }
   if (trimmed === "/保存") {
     return { command: "archive", trigger: "/保存" };
+  }
+  if (trimmed === "/log") {
+    return { command: "source-log", trigger: "/log" };
+  }
+  if (trimmed === "/ログ") {
+    return { command: "source-log", trigger: "/ログ" };
   }
   if (trimmed === "/元ログ") {
     return { command: "source-log", trigger: "/元ログ" };

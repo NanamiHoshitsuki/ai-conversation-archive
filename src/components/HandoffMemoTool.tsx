@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import yaml from "js-yaml";
 import {
   generateHandoffMemo,
   getMemoMonthFolder,
@@ -45,6 +46,14 @@ type ChatMessage = {
 
 type OutputTab = "yaml" | "source";
 type InputTab = "memo-save" | "log-save" | "memo-create";
+
+type SourceInfo = {
+  platform: string;
+  title: string;
+  conversationUrl: string;
+  savedAt: string;
+  userNote: string;
+};
 
 const DIRECTORY_DB_NAME = "ai-conversation-archive";
 const DIRECTORY_STORE_NAME = "settings";
@@ -135,6 +144,78 @@ function formatMarkdownTimestamp(date = new Date()) {
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 }
 
+function formatSourceTimestamp(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+
+function buildSourceMetadata(sourceInfo: SourceInfo) {
+  const source: Record<string, string> = {};
+  if (sourceInfo.platform.trim()) source.platform = sourceInfo.platform.trim();
+  if (sourceInfo.title.trim()) source.title = sourceInfo.title.trim();
+  if (sourceInfo.conversationUrl.trim()) source.conversation_url = sourceInfo.conversationUrl.trim();
+  if (sourceInfo.savedAt.trim()) source.saved_at = sourceInfo.savedAt.trim();
+  if (sourceInfo.userNote.trim()) source.user_note = sourceInfo.userNote.trim();
+  return source;
+}
+
+function sourceMetadataLines(sourceInfo: SourceInfo) {
+  const source = buildSourceMetadata(sourceInfo);
+  const lines = [`saved_at: ${source.saved_at ?? formatSourceTimestamp()}`];
+  if (source.platform) lines.push(`platform: ${source.platform}`);
+  if (source.title) lines.push(`title: ${source.title}`);
+  if (source.conversation_url) lines.push(`conversation_url: ${source.conversation_url}`);
+  if (source.user_note) lines.push(`user_note: ${source.user_note}`);
+  return lines;
+}
+
+function mergeSourceMetadataIntoYaml(yamlText: string, sourceInfo: SourceInfo) {
+  const sourceMetadata = buildSourceMetadata(sourceInfo);
+  if (Object.keys(sourceMetadata).length === 0) return yamlText;
+
+  try {
+    const parsed = yaml.load(yamlText);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return yamlText;
+    const existingSource =
+      "source" in parsed && parsed.source && typeof parsed.source === "object" && !Array.isArray(parsed.source)
+        ? (parsed.source as Record<string, unknown>)
+        : {};
+    return yaml.dump(
+      {
+        ...(parsed as Record<string, unknown>),
+        source: {
+          ...existingSource,
+          ...sourceMetadata,
+        },
+      },
+      {
+        lineWidth: 120,
+        noRefs: true,
+        quotingType: '"',
+        sortKeys: false,
+      },
+    );
+  } catch {
+    return yamlText;
+  }
+}
+
+function mergeSourceMetadataIntoMarkdown(markdownText: string, sourceInfo: SourceInfo) {
+  const sourceLines = sourceMetadataLines(sourceInfo);
+  const normalized = markdownText.trimStart();
+  if (normalized.startsWith("# Source Conversation")) {
+    const [, ...rest] = normalized.split("\n");
+    const contentStartIndex = rest.findIndex((line) => /^\[\d{3}\]\s/.test(line.trim()) || line.startsWith("# "));
+    const contentLines = contentStartIndex >= 0 ? rest.slice(contentStartIndex) : rest;
+    return ["# Source Conversation", "", ...sourceLines, "", ...contentLines].join("\n").trimEnd() + "\n";
+  }
+  return ["# Source Conversation", "", ...sourceLines, "", normalized].join("\n").trimEnd() + "\n";
+}
+
 function getSourceOnlyDownloadFilename(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -179,6 +260,13 @@ export default function HandoffMemoTool() {
   const [sourceLogText, setSourceLogText] = useState("");
   const [sourceLogFilename, setSourceLogFilename] = useState("");
   const [activeOutputTab, setActiveOutputTab] = useState<OutputTab>("yaml");
+  const [sourceInfo, setSourceInfo] = useState<SourceInfo>(() => ({
+    platform: "ChatGPT",
+    title: "",
+    conversationUrl: "",
+    savedAt: formatSourceTimestamp(),
+    userNote: "",
+  }));
   const currentYamlFilename = yamlText ? getYamlDownloadFilename(yamlText) : "";
   const currentSourceLogFilename = sourceLogFilename || getSourceOnlyDownloadFilename();
   const activeFilename =
@@ -188,6 +276,13 @@ export default function HandoffMemoTool() {
   function selectInputTab(tab: InputTab) {
     setActiveInputTab(tab);
     setActiveOutputTab(tab === "log-save" ? "source" : "yaml");
+  }
+
+  function updateSourceInfo(field: keyof SourceInfo, value: string) {
+    setSourceInfo((current) => ({
+      ...current,
+      [field]: value,
+    }));
   }
 
   useEffect(() => {
@@ -239,13 +334,13 @@ export default function HandoffMemoTool() {
   }
 
   function buildSourceLogMarkdown(params: {
-    savedAt: string;
+    sourceInfo: SourceInfo;
     messages: ChatMessage[];
   }) {
     const lines = [
       "# Source Conversation",
       "",
-      `saved_at: ${params.savedAt}`,
+      ...sourceMetadataLines(params.sourceInfo),
       "",
     ];
 
@@ -270,9 +365,11 @@ export default function HandoffMemoTool() {
 
   function buildBulkMemo(source: string) {
     const createdAt = new Date();
+    const sourceMetadata = buildSourceMetadata(sourceInfo);
     const draftMemo = generateHandoffMemo(source, createdAt, {
       source: {
         source_mode: "bulk-convert",
+        ...sourceMetadata,
         captured_range: {
           before_messages: source.split(/\n+/).filter(Boolean).length,
           after_messages: 0,
@@ -284,6 +381,7 @@ export default function HandoffMemoTool() {
       source: {
         source_mode: "bulk-convert",
         source_log_file: sourceLogFile,
+        ...sourceMetadata,
         captured_range: {
           before_messages: source.split(/\n+/).filter(Boolean).length,
           after_messages: 0,
@@ -293,7 +391,10 @@ export default function HandoffMemoTool() {
     const nextYaml = memoToYaml(nextMemo);
     const nextSourceLog = saveSourceLog
       ? buildSourceLogMarkdown({
-          savedAt: formatMarkdownTimestamp(createdAt),
+          sourceInfo: {
+            ...sourceInfo,
+            savedAt: sourceInfo.savedAt || formatSourceTimestamp(createdAt),
+          },
           messages: bulkMessages(source),
         })
       : "";
@@ -356,7 +457,7 @@ export default function HandoffMemoTool() {
   }
 
   async function saveSourceLogFile() {
-    const nextSourceLog = sourceLogText.trim();
+    const nextSourceLog = mergeSourceMetadataIntoMarkdown(sourceLogText, sourceInfo).trim();
     if (!nextSourceLog) {
       setStatus("保存する会話ログを貼り付けてください。");
       return;
@@ -389,7 +490,7 @@ export default function HandoffMemoTool() {
     }
 
     let nextMemo = activeInputTab === "memo-save" ? null : memo;
-    let nextYaml = yamlText;
+    let nextYaml = mergeSourceMetadataIntoYaml(yamlText, sourceInfo);
     const isPastedYaml = activeInputTab === "memo-save";
 
     if (!nextYaml) {
@@ -422,6 +523,7 @@ export default function HandoffMemoTool() {
         } else {
           await writeYamlTextToDirectory(directoryHandle, nextYaml, monthFolder);
         }
+        setYamlText(nextYaml);
         setStatus(`${monthFolder}/${getYamlDownloadFilename(nextYaml)} に保存しました。`);
         return;
       } catch {
@@ -429,6 +531,7 @@ export default function HandoffMemoTool() {
       }
     }
 
+    setYamlText(nextYaml);
     downloadYaml(getYamlDownloadFilename(nextYaml), nextYaml);
     setStatus("知識メモをダウンロードしました。");
   }
@@ -443,7 +546,9 @@ export default function HandoffMemoTool() {
       setStatus("先に知識メモを生成または貼り付けてください。");
       return;
     }
-    downloadYaml(getYamlDownloadFilename(yamlText), yamlText);
+    const nextYaml = mergeSourceMetadataIntoYaml(yamlText, sourceInfo);
+    setYamlText(nextYaml);
+    downloadYaml(getYamlDownloadFilename(nextYaml), nextYaml);
     setStatus("知識メモをダウンロードしました。");
   }
 
@@ -452,7 +557,9 @@ export default function HandoffMemoTool() {
       setStatus("会話ログがありません。先に会話ログを生成してください。");
       return;
     }
-    downloadTextFile(currentSourceLogFilename, sourceLogText, "text/markdown;charset=utf-8");
+    const nextSourceLog = mergeSourceMetadataIntoMarkdown(sourceLogText, sourceInfo);
+    setSourceLogText(nextSourceLog);
+    downloadTextFile(currentSourceLogFilename, nextSourceLog, "text/markdown;charset=utf-8");
     setStatus("会話ログをダウンロードしました。");
   }
 
@@ -461,11 +568,15 @@ export default function HandoffMemoTool() {
       setStatus("先に知識メモを生成または貼り付けてください。");
       return;
     }
-    downloadYaml(getYamlDownloadFilename(yamlText), yamlText);
+    const nextYaml = mergeSourceMetadataIntoYaml(yamlText, sourceInfo);
+    setYamlText(nextYaml);
+    downloadYaml(getYamlDownloadFilename(nextYaml), nextYaml);
     if (sourceLogText) {
+      const nextSourceLog = mergeSourceMetadataIntoMarkdown(sourceLogText, sourceInfo);
+      setSourceLogText(nextSourceLog);
       downloadTextFile(
-        sourceLogFilename || getSourceLogDownloadFilename(yamlText),
-        sourceLogText,
+        sourceLogFilename || getSourceLogDownloadFilename(nextYaml),
+        nextSourceLog,
         "text/markdown;charset=utf-8",
       );
       setStatus("知識メモと会話ログをダウンロードしました。");
@@ -505,6 +616,75 @@ export default function HandoffMemoTool() {
                   {label}
                 </button>
               ))}
+            </div>
+
+            <div className="mt-4 rounded-md border border-stone-200 bg-stone-50 p-3">
+              <p className="text-sm font-bold text-stone-950">保存情報入力欄</p>
+              <p className="mt-1 text-xs leading-5 text-stone-500">
+                元のチャットを後から見つけやすくするための任意情報です。空欄でも従来通り保存できます。
+              </p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="source-platform" className="text-xs font-bold text-stone-600">
+                    platform
+                  </label>
+                  <input
+                    id="source-platform"
+                    value={sourceInfo.platform}
+                    onChange={(event) => updateSourceInfo("platform", event.target.value)}
+                    className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+                    placeholder="ChatGPT"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="source-saved-at" className="text-xs font-bold text-stone-600">
+                    saved_at
+                  </label>
+                  <input
+                    id="source-saved-at"
+                    value={sourceInfo.savedAt}
+                    onChange={(event) => updateSourceInfo("savedAt", event.target.value)}
+                    className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+                    placeholder="2026-06-18 22:00"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="source-title" className="text-xs font-bold text-stone-600">
+                    title
+                  </label>
+                  <input
+                    id="source-title"
+                    value={sourceInfo.title}
+                    onChange={(event) => updateSourceInfo("title", event.target.value)}
+                    className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+                    placeholder="AI会話アーカイブ設計"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="source-url" className="text-xs font-bold text-stone-600">
+                    conversation_url
+                  </label>
+                  <input
+                    id="source-url"
+                    value={sourceInfo.conversationUrl}
+                    onChange={(event) => updateSourceInfo("conversationUrl", event.target.value)}
+                    className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+                    placeholder="https://chatgpt.com/c/..."
+                  />
+                </div>
+              </div>
+              <div className="mt-3">
+                <label htmlFor="source-note" className="text-xs font-bold text-stone-600">
+                  user_note
+                </label>
+                <textarea
+                  id="source-note"
+                  value={sourceInfo.userNote}
+                  onChange={(event) => updateSourceInfo("userNote", event.target.value)}
+                  className="mt-1 min-h-20 w-full resize-y rounded-md border border-stone-300 bg-white p-3 text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+                  placeholder="どのチャットだったか思い出すためのメモ"
+                />
+              </div>
             </div>
 
             {activeInputTab === "memo-save" && (
