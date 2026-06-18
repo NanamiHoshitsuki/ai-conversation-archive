@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import yaml from "js-yaml";
+import { SHIORI_ARCHIVE_PROMPT } from "@/lib/archivePrompt";
 import {
   generateHandoffMemo,
   getMemoMonthFolder,
@@ -585,6 +586,28 @@ export default function HandoffMemoTool() {
     setStatus("知識メモをダウンロードしました。会話ログはありません。");
   }
 
+  async function copyShioriPrompt() {
+    try {
+      await navigator.clipboard.writeText(SHIORI_ARCHIVE_PROMPT);
+      setStatus("しおりプロンプトをコピーしました。");
+    } catch {
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = SHIORI_ARCHIVE_PROMPT;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand("copy");
+        textarea.remove();
+        setStatus(copied ? "しおりプロンプトをコピーしました。" : "しおりプロンプトのコピーに失敗しました。");
+      } catch {
+        setStatus("しおりプロンプトのコピーに失敗しました。");
+      }
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#f7f5ef] text-stone-950">
       <header className="border-b border-stone-200 bg-white">
@@ -616,6 +639,20 @@ export default function HandoffMemoTool() {
                   {label}
                 </button>
               ))}
+            </div>
+
+            <div className="mt-4 rounded-md border border-teal-100 bg-teal-50 p-3">
+              <p className="text-sm font-bold text-stone-950">プロンプト</p>
+              <p className="mt-1 text-xs leading-5 text-stone-600">
+                ChatGPT / Claude / Gemini のカスタム指示や会話冒頭に貼り付けて、/しおり や /archive 出力を使えるようにします。
+              </p>
+              <button
+                type="button"
+                onClick={copyShioriPrompt}
+                className="mt-3 h-10 rounded-md bg-teal-700 px-4 text-sm font-bold text-white hover:bg-teal-800"
+              >
+                しおりプロンプトをコピー
+              </button>
             </div>
 
             <div className="mt-4 rounded-md border border-stone-200 bg-stone-50 p-3">
