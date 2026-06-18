@@ -12,19 +12,14 @@ export type HandoffMemo = {
   ideas: string[];
   important_context: string[];
   why_it_matters: string[];
-  extension_blocks: {
-    business_opportunities: string[];
-    research_opportunities: string[];
-    story_ideas: string[];
-    note_ideas: string[];
-    risks: string[];
-    assumptions: string[];
-  };
-  current_themes: string[];
   category: string;
   topic: string;
   type: string;
   tags: string[];
+  reuse_for: string[];
+  business_opportunities?: string[];
+  research_questions?: string[];
+  content_ideas?: string[];
 };
 
 const FIELD_ORDER: Array<keyof HandoffMemo> = [
@@ -39,12 +34,14 @@ const FIELD_ORDER: Array<keyof HandoffMemo> = [
   "ideas",
   "important_context",
   "why_it_matters",
-  "extension_blocks",
-  "current_themes",
   "category",
   "topic",
   "type",
   "tags",
+  "reuse_for",
+  "business_opportunities",
+  "research_questions",
+  "content_ideas",
 ];
 
 const STOP_PREFIXES = [
@@ -93,20 +90,26 @@ function pick(lines: string[], keywords: string[], fallback: string[], limit = 5
   return unique([...matched, ...fallback]).slice(0, limit);
 }
 
+function pickConditional(lines: string[], keywords: string[], fallback: string[], limit = 5) {
+  const matched = lines.filter((line) => keywords.some((keyword) => line.includes(keyword)));
+  if (matched.length === 0) return undefined;
+  return unique([...matched, ...fallback]).slice(0, limit);
+}
+
 function inferCategory(text: string) {
   if (text.includes("研究") || text.includes("論文") || text.includes("実験")) return "research";
   if (text.includes("小説") || text.includes("物語") || text.includes("創作")) return "creative";
   if (text.includes("記事") || text.includes("コンテンツ") || text.includes("投稿")) return "content";
   if (text.includes("事業") || text.includes("商品") || text.includes("サービス")) return "business";
   if (text.includes("実装") || text.includes("アプリ") || text.includes("ツール")) return "productivity";
-  return "knowledge";
+  return "conversation";
 }
 
 function inferTopic(text: string) {
   if (text.includes("アーカイブ") || text.includes("知識資産")) return "ai-conversation-archive";
   if (text.includes("引き継ぎ") || text.includes("handoff")) return "ai-handoff-memo";
   if (text.includes("コンテキスト")) return "ai-context";
-  return "reusable-conversation-output";
+  return "general";
 }
 
 function inferType(text: string) {
@@ -117,7 +120,7 @@ function inferType(text: string) {
   if (text.includes("物語") || text.includes("story_ideas")) return "creative-note";
   if (text.includes("商品") || text.includes("事業機会") || text.includes("ビジネス")) return "business-note";
   if (text.includes("実装") || text.includes("API") || text.includes("保存")) return "implementation";
-  return "knowledge-archive";
+  return "archive";
 }
 
 function inferTitle(text: string, topic: string, type: string) {
@@ -141,6 +144,18 @@ function monthString(date: string) {
 
 export function getMemoMonthFolder(memo: Pick<HandoffMemo, "date">) {
   return monthString(memo.date);
+}
+
+export type ArchiveCommand = {
+  command: "archive";
+};
+
+export function parseArchiveCommand(input: string): ArchiveCommand | null {
+  const trimmed = input.trim();
+  if (trimmed === "/archive" || trimmed === "/保存") {
+    return { command: "archive" };
+  }
+  return null;
 }
 
 export function generateHandoffMemo(input: string, now = new Date()): HandoffMemo {
@@ -198,9 +213,9 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
     ],
   );
 
-  const businessOpportunities = pick(
+  const businessOpportunities = pickConditional(
     lines,
-    ["ツール", "サービス", "商品", "事業", "候補", "検索", "管理"],
+    ["事業", "商品", "ビジネス", "サービス", "収益", "販売", "顧客", "市場", "起業"],
     [
       "AI会話知識アーカイブツール",
       "YAMLアーカイブ検索",
@@ -208,7 +223,7 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
     ],
   );
 
-  const researchOpportunities = pick(
+  const researchQuestions = pickConditional(
     lines,
     ["研究", "問い", "仮説", "検証", "実験", "調査", "論文"],
     [
@@ -217,49 +232,12 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
     ],
   );
 
-  const storyIdeas = pick(
-    lines,
-    ["物語", "小説", "キャラクター", "設定", "プロット", "創作", "シーン"],
-    [
-      "会話内の設定や展開案を創作メモとして保存する",
-      "未使用のプロットやキャラクター案を後で再利用できるようにする",
-    ],
-  );
-
-  const noteIdeas = pick(
+  const contentIdeas = pickConditional(
     lines,
     ["記事", "投稿", "コラム", "発信", "読者", "コンテンツ"],
     [
       "会話から記事化できる論点を抽出する",
       "発信ネタを会話の流れから拾い上げる",
-    ],
-  );
-
-  const risks = pick(
-    lines,
-    ["リスク", "危険", "注意", "違和感", "重くなる", "失敗", "依存"],
-    [
-      "用途依存の項目を標準項目に混ぜると他の利用者に違和感が出る",
-      "会話全文を保存するとノイズや個人情報も残りやすい",
-    ],
-  );
-
-  const assumptions = pick(
-    lines,
-    ["前提", "想定", "なら", "場合", "用途", "初期"],
-    [
-      "初期版はローカル保存を前提にする",
-      "用途に応じて拡張ブロックを追加・削除できるものとする",
-    ],
-  );
-
-  const currentThemes = pick(
-    lines,
-    ["テーマ", "AI", "会話", "引き継ぎ", "保存", "Google Drive", "同期", "YAML"],
-    [
-      "AI会話からの再利用資産抽出",
-      "共通コアと拡張ブロックによるYAML標準化",
-      "後日読んでも文脈が復元できる知識アーカイブ",
     ],
   );
 
@@ -305,7 +283,17 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
     type,
   ]).slice(0, 10);
 
-  return {
+  const reuseFor = pick(
+    lines,
+    ["引き継ぎ", "再利用", "後日", "検索", "業務", "創作", "研究", "記事", "実装"],
+    [
+      "後日見返すための文脈復元",
+      "別AIへの引き継ぎ",
+      "次の作業や意思決定の再開",
+    ],
+  );
+
+  const memo: HandoffMemo = {
     title,
     filename,
     date,
@@ -317,25 +305,26 @@ export function generateHandoffMemo(input: string, now = new Date()): HandoffMem
     ideas,
     important_context: importantContext,
     why_it_matters: whyItMatters,
-    extension_blocks: {
-      business_opportunities: businessOpportunities,
-      research_opportunities: researchOpportunities,
-      story_ideas: storyIdeas,
-      note_ideas: noteIdeas,
-      risks,
-      assumptions,
-    },
-    current_themes: currentThemes,
     category,
     topic,
     type,
     tags,
+    reuse_for: reuseFor,
   };
+
+  if (businessOpportunities) memo.business_opportunities = businessOpportunities;
+  if (researchQuestions) memo.research_questions = researchQuestions;
+  if (contentIdeas) memo.content_ideas = contentIdeas;
+
+  return memo;
 }
 
 export function memoToYaml(memo: HandoffMemo) {
   const ordered = FIELD_ORDER.reduce<Record<string, unknown>>((acc, field) => {
-    acc[field] = memo[field];
+    const value = memo[field];
+    if (value === undefined) return acc;
+    if (Array.isArray(value) && value.length === 0) return acc;
+    acc[field] = value;
     return acc;
   }, {});
 

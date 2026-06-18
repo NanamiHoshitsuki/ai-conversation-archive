@@ -1,7 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { generateHandoffMemo, getMemoMonthFolder, memoToYaml, type HandoffMemo } from "@/lib/handoffMemo";
+import { useState } from "react";
+import {
+  generateHandoffMemo,
+  getMemoMonthFolder,
+  memoToYaml,
+  parseArchiveCommand,
+  type HandoffMemo,
+} from "@/lib/handoffMemo";
 
 type WritableDirectoryHandle = {
   getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<WritableDirectoryHandle>;
@@ -23,8 +29,14 @@ const sampleLog = `ユーザー:
 AIとの会話を後で見返せる知識資産として残したい。
 決定事項と次の行動を上に置きたい。
 共通項目は固定し、用途依存の項目は拡張ブロックに分けたい。
-事業家なら business_opportunities、研究者なら research_opportunities、小説家なら story_ideas を使えるようにしたい。
+事業家なら business_opportunities、研究者なら research_questions、発信者なら content_ideas を使えるようにしたい。
 会話ログそのものではなく、再利用価値のある成果物を保存する仕組みにしたい。`;
+
+type ChatMessage = {
+  id: number;
+  role: "user" | "assistant";
+  text: string;
+};
 
 function downloadYaml(filename: string, yamlText: string) {
   const blob = new Blob([yamlText], { type: "text/yaml;charset=utf-8" });
@@ -48,12 +60,13 @@ async function writeYamlToDirectory(directory: WritableDirectoryHandle, memo: Ha
 
 export default function HandoffMemoTool() {
   const [conversationLog, setConversationLog] = useState("");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatRole, setChatRole] = useState<ChatMessage["role"]>("user");
   const [memo, setMemo] = useState<HandoffMemo | null>(null);
   const [yamlText, setYamlText] = useState("");
   const [directoryHandle, setDirectoryHandle] = useState<WritableDirectoryHandle | null>(null);
   const [status, setStatus] = useState("");
-
-  const canPickDirectory = useMemo(() => typeof window !== "undefined" && Boolean(window.showDirectoryPicker), []);
 
   function generate() {
     const source = conversationLog.trim();
@@ -67,6 +80,55 @@ export default function HandoffMemoTool() {
     setMemo(nextMemo);
     setYamlText(nextYaml);
     setStatus("YAMLを生成しました。");
+  }
+
+  function buildChatTranscript(messages: ChatMessage[]) {
+    return messages.map((message) => `${message.role === "user" ? "ユーザー" : "AI"}: ${message.text}`).join("\n");
+  }
+
+  function archiveChatHistory(messages: ChatMessage[]) {
+    const transcript = buildChatTranscript(messages);
+    if (messages.length < 2 || transcript.length < 60) {
+      setStatus("保存できる内容が不足しています。");
+      return;
+    }
+
+    const nextMemo = generateHandoffMemo(transcript);
+    const nextYaml = memoToYaml(nextMemo);
+    setMemo(nextMemo);
+    setYamlText(nextYaml);
+    setStatus("チャット履歴からYAMLを生成しました。");
+  }
+
+  function sendChatMessage() {
+    const text = chatInput.trim();
+    if (!text) return;
+
+    const command = parseArchiveCommand(text);
+    if (command) {
+      archiveChatHistory(chatMessages);
+      setChatMessages((messages) => [
+        ...messages,
+        {
+          id: Date.now(),
+          role: "user",
+          text,
+        },
+      ]);
+      setChatInput("");
+      return;
+    }
+
+    setChatMessages((messages) => [
+      ...messages,
+      {
+        id: Date.now(),
+        role: chatRole,
+        text,
+      },
+    ]);
+    setChatInput("");
+    setStatus("チャットに追加しました。");
   }
 
   async function chooseDirectory() {
@@ -130,21 +192,14 @@ export default function HandoffMemoTool() {
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">Reusable conversation archive</p>
             <h1 className="mt-1 text-xl font-bold">AI会話知識アーカイブ</h1>
           </div>
-          <button
-            type="button"
-            onClick={() => setConversationLog(sampleLog)}
-            className="h-10 rounded-md border border-stone-300 bg-white px-4 text-sm font-semibold hover:bg-stone-50"
-          >
-            サンプル入力
-          </button>
         </div>
       </header>
 
       <main className="mx-auto grid max-w-6xl gap-5 px-5 py-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
         <section className="space-y-4">
-          <div>
+          <div className="rounded-md border border-stone-200 bg-white p-4">
             <label htmlFor="conversation-log" className="text-sm font-bold">
-              会話ログ
+              一括変換モード
             </label>
             <textarea
               id="conversation-log"
@@ -153,21 +208,98 @@ export default function HandoffMemoTool() {
               className="mt-2 min-h-[520px] w-full resize-y rounded-md border border-stone-300 bg-white p-4 font-mono text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
               placeholder="ChatGPTなどの会話ログをここに貼り付け"
             />
+            <div className="mt-3 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={generate}
+                className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
+              >
+                YAML生成
+              </button>
+              <button
+                type="button"
+                onClick={() => setConversationLog(sampleLog)}
+                className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
+              >
+                サンプル入力
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-stone-200 bg-white p-4">
+            <div className="flex items-center justify-between gap-3">
+              <label htmlFor="chat-input" className="text-sm font-bold">
+                チャット保存モード
+              </label>
+              <div className="flex rounded-md border border-stone-300 bg-stone-50 p-1">
+                {(["user", "assistant"] as const).map((role) => (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => setChatRole(role)}
+                    className={`h-8 rounded px-3 text-xs font-bold ${
+                      chatRole === role ? "bg-stone-950 text-white" : "text-stone-600 hover:bg-white"
+                    }`}
+                  >
+                    {role === "user" ? "ユーザー" : "AI"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-3 min-h-[220px] max-h-[360px] overflow-y-auto rounded-md border border-stone-200 bg-stone-50 p-3">
+              {chatMessages.length === 0 ? (
+                <p className="text-sm text-stone-500">チャット履歴はまだありません。</p>
+              ) : (
+                <div className="space-y-2">
+                  {chatMessages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`rounded-md border p-3 text-sm ${
+                        message.role === "user"
+                          ? "border-teal-100 bg-white"
+                          : "border-stone-200 bg-[#fffaf0]"
+                      }`}
+                    >
+                      <p className="mb-1 text-xs font-bold text-stone-500">
+                        {message.role === "user" ? "ユーザー" : "AI"}
+                      </p>
+                      <p className="whitespace-pre-wrap leading-6">{message.text}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-3 flex gap-2">
+              <input
+                id="chat-input"
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    sendChatMessage();
+                  }
+                }}
+                className="h-11 min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+                placeholder="/archive または /保存 で直前履歴からYAML生成"
+              />
+              <button
+                type="button"
+                onClick={sendChatMessage}
+                className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
+              >
+                送信
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={generate}
-              className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
-            >
-              YAML生成
-            </button>
-            <button
-              type="button"
               onClick={chooseDirectory}
-              className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!canPickDirectory}
+              className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
             >
               保存先フォルダ
             </button>
@@ -194,11 +326,9 @@ export default function HandoffMemoTool() {
                 ? "選択済みフォルダ / YYYY-MM / filename.yaml"
                 : "未選択の場合はブラウザのダウンロード保存"}
             </p>
-            {!canPickDirectory && (
-              <p className="mt-2 text-amber-700">
-                このブラウザではフォルダ指定保存が使えないため、ダウンロード保存のみ有効です。
-              </p>
-            )}
+            <p className="mt-2 text-stone-500">
+              フォルダ指定に未対応のブラウザでは、ダウンロード保存を使います。
+            </p>
           </div>
         </section>
 
