@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   generateHandoffMemo,
   getMemoMonthFolder,
+  getYamlDownloadFilename,
   memoToYaml,
   parseArchiveCommand,
   type HandoffMemo,
@@ -52,7 +53,7 @@ function downloadYaml(filename: string, yamlText: string) {
 
 async function writeYamlToDirectory(directory: WritableDirectoryHandle, memo: HandoffMemo, yamlText: string) {
   const monthDirectory = await directory.getDirectoryHandle(getMemoMonthFolder(memo), { create: true });
-  const fileHandle = await monthDirectory.getFileHandle(memo.filename, { create: true });
+  const fileHandle = await monthDirectory.getFileHandle(getYamlDownloadFilename(yamlText), { create: true });
   const writable = await fileHandle.createWritable();
   await writable.write(yamlText);
   await writable.close();
@@ -67,6 +68,20 @@ export default function HandoffMemoTool() {
   const [yamlText, setYamlText] = useState("");
   const [directoryHandle, setDirectoryHandle] = useState<WritableDirectoryHandle | null>(null);
   const [status, setStatus] = useState("");
+  const [autoDownload, setAutoDownload] = useState(false);
+
+  function finishGeneration(nextMemo: HandoffMemo, nextYaml: string, message: string) {
+    setMemo(nextMemo);
+    setYamlText(nextYaml);
+
+    if (autoDownload) {
+      downloadYaml(getYamlDownloadFilename(nextYaml), nextYaml);
+      setStatus(`${message} 自動ダウンロードしました。`);
+      return;
+    }
+
+    setStatus(`${message} ダウンロードボタンが使えます。`);
+  }
 
   function generate() {
     const source = conversationLog.trim();
@@ -81,9 +96,7 @@ export default function HandoffMemoTool() {
       },
     });
     const nextYaml = memoToYaml(nextMemo);
-    setMemo(nextMemo);
-    setYamlText(nextYaml);
-    setStatus("YAMLを生成しました。");
+    finishGeneration(nextMemo, nextYaml, "YAMLを生成しました。");
   }
 
   function buildChatTranscript(messages: ChatMessage[]) {
@@ -104,9 +117,7 @@ export default function HandoffMemoTool() {
       },
     });
     const nextYaml = memoToYaml(nextMemo);
-    setMemo(nextMemo);
-    setYamlText(nextYaml);
-    setStatus("チャット履歴からYAMLを生成しました。");
+    finishGeneration(nextMemo, nextYaml, "チャット履歴からYAMLを生成しました。");
   }
 
   function sendChatMessage() {
@@ -177,23 +188,23 @@ export default function HandoffMemoTool() {
     if (directoryHandle) {
       try {
         await writeYamlToDirectory(directoryHandle, nextMemo, nextYaml);
-        setStatus(`${getMemoMonthFolder(nextMemo)}/${nextMemo.filename} に保存しました。`);
+        setStatus(`${getMemoMonthFolder(nextMemo)}/${getYamlDownloadFilename(nextYaml)} に保存しました。`);
         return;
       } catch {
         setStatus("フォルダ保存に失敗しました。ダウンロード保存に切り替えます。");
       }
     }
 
-    downloadYaml(nextMemo.filename, nextYaml);
+    downloadYaml(getYamlDownloadFilename(nextYaml), nextYaml);
     setStatus("YAMLをダウンロードしました。");
   }
 
   function download() {
-    if (!memo || !yamlText) {
+    if (!yamlText) {
       setStatus("先にYAMLを生成してください。");
       return;
     }
-    downloadYaml(memo.filename, yamlText);
+    downloadYaml(getYamlDownloadFilename(yamlText), yamlText);
     setStatus("YAMLをダウンロードしました。");
   }
 
@@ -330,6 +341,15 @@ export default function HandoffMemoTool() {
             >
               ダウンロード
             </button>
+            <label className="flex h-11 items-center gap-2 rounded-md border border-stone-300 bg-white px-4 text-sm font-bold">
+              <input
+                type="checkbox"
+                checked={autoDownload}
+                onChange={(event) => setAutoDownload(event.target.checked)}
+                className="h-4 w-4 accent-teal-700"
+              />
+              生成後に自動ダウンロード
+            </label>
           </div>
 
           <div className="rounded-md border border-stone-200 bg-white p-4 text-sm text-stone-700">

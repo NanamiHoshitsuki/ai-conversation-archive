@@ -225,6 +225,26 @@ export function getMemoMonthFolder(memo: Pick<HandoffMemo, "date">) {
   return monthString(memo.date);
 }
 
+export function getFallbackMemoFilename(now = new Date()) {
+  return `${dateString(now)}_ai-handoff-memo.yaml`;
+}
+
+export function getYamlDownloadFilename(yamlText: string, fallbackDate = new Date()) {
+  try {
+    const parsed = yaml.load(yamlText);
+    if (parsed && typeof parsed === "object" && "filename" in parsed) {
+      const filename = (parsed as { filename?: unknown }).filename;
+      if (typeof filename === "string" && filename.trim()) {
+        return filename.trim().endsWith(".yaml") ? filename.trim() : `${filename.trim()}.yaml`;
+      }
+    }
+  } catch {
+    return getFallbackMemoFilename(fallbackDate);
+  }
+
+  return getFallbackMemoFilename(fallbackDate);
+}
+
 export type ArchiveCommand = {
   command: "archive";
   trigger: "/archive" | "/保存";
