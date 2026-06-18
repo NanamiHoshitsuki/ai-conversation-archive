@@ -4,6 +4,8 @@ import { useState } from "react";
 import {
   generateHandoffMemo,
   getMemoMonthFolder,
+  getSourceLogDownloadFilename,
+  getSourceLogFilenameFromYamlFilename,
   getYamlDownloadFilename,
   memoToYaml,
   parseArchiveCommand,
@@ -39,8 +41,8 @@ type ChatMessage = {
   text: string;
 };
 
-function downloadYaml(filename: string, yamlText: string) {
-  const blob = new Blob([yamlText], { type: "text/yaml;charset=utf-8" });
+function downloadTextFile(filename: string, text: string, type = "text/plain;charset=utf-8") {
+  const blob = new Blob([text], { type });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -49,6 +51,10 @@ function downloadYaml(filename: string, yamlText: string) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function downloadYaml(filename: string, yamlText: string) {
+  downloadTextFile(filename, yamlText, "text/yaml;charset=utf-8");
 }
 
 async function writeYamlToDirectory(directory: WritableDirectoryHandle, memo: HandoffMemo, yamlText: string) {
@@ -69,10 +75,13 @@ export default function HandoffMemoTool() {
   const [directoryHandle, setDirectoryHandle] = useState<WritableDirectoryHandle | null>(null);
   const [status, setStatus] = useState("");
   const [autoDownload, setAutoDownload] = useState(false);
+  const [saveSourceLog, setSaveSourceLog] = useState(true);
+  const [sourceLogText, setSourceLogText] = useState("");
 
-  function finishGeneration(nextMemo: HandoffMemo, nextYaml: string, message: string) {
+  function finishGeneration(nextMemo: HandoffMemo, nextYaml: string, message: string, nextSourceLog = "") {
     setMemo(nextMemo);
     setYamlText(nextYaml);
+    setSourceLogText(nextSourceLog);
 
     if (autoDownload) {
       downloadYaml(getYamlDownloadFilename(nextYaml), nextYaml);
@@ -83,14 +92,47 @@ export default function HandoffMemoTool() {
     setStatus(`${message} ダウンロードボタンが使えます。`);
   }
 
-  function generate() {
-    const source = conversationLog.trim();
-    if (!source) {
-      setStatus("会話ログを貼り付けてください。");
-      return;
-    }
+  function buildSourceLogMarkdown(params: {
+    sourceMode: "bulk-convert" | "chat-save";
+    generatedAt: string;
+    relatedYaml: string;
+    messages: ChatMessage[];
+  }) {
+    const lines = [
+      "# Source Conversation Log",
+      "",
+      `source_mode: ${params.sourceMode}`,
+      `generated_at: ${params.generatedAt}`,
+      `related_yaml: ${params.relatedYaml}`,
+      "",
+      "---",
+      "",
+      "## Messages",
+      "",
+    ];
 
-    const nextMemo = generateHandoffMemo(source, new Date(), {
+    params.messages.forEach((message, index) => {
+      lines.push(`[${String(index + 1).padStart(3, "0")}] ${message.role}`);
+      lines.push(message.text);
+      lines.push("");
+    });
+
+    return lines.join("\n");
+  }
+
+  function bulkMessages(source: string): ChatMessage[] {
+    return [
+      {
+        id: 1,
+        role: "user",
+        text: source,
+      },
+    ];
+  }
+
+  function buildBulkMemo(source: string) {
+    const createdAt = new Date();
+    const draftMemo = generateHandoffMemo(source, createdAt, {
       source: {
         source_mode: "bulk-convert",
         captured_range: {
@@ -99,8 +141,39 @@ export default function HandoffMemoTool() {
         },
       },
     });
+    const sourceLogFile = saveSourceLog ? getSourceLogFilenameFromYamlFilename(draftMemo.filename) : null;
+    const nextMemo = generateHandoffMemo(source, createdAt, {
+      source: {
+        source_mode: "bulk-convert",
+        source_log_file: sourceLogFile,
+        captured_range: {
+          before_messages: source.split(/\n+/).filter(Boolean).length,
+          after_messages: 0,
+        },
+      },
+    });
     const nextYaml = memoToYaml(nextMemo);
-    finishGeneration(nextMemo, nextYaml, "YAMLを生成しました。");
+    const nextSourceLog = saveSourceLog
+      ? buildSourceLogMarkdown({
+          sourceMode: "bulk-convert",
+          generatedAt: nextMemo.source?.saved_at ?? createdAt.toISOString(),
+          relatedYaml: nextMemo.filename,
+          messages: bulkMessages(source),
+        })
+      : "";
+
+    return { nextMemo, nextYaml, nextSourceLog };
+  }
+
+  function generate() {
+    const source = conversationLog.trim();
+    if (!source) {
+      setStatus("会話ログを貼り付けてください。");
+      return;
+    }
+
+    const { nextMemo, nextYaml, nextSourceLog } = buildBulkMemo(source);
+    finishGeneration(nextMemo, nextYaml, "YAMLを生成しました。", nextSourceLog);
   }
 
   function buildChatTranscript(messages: ChatMessage[]) {
@@ -120,7 +193,8 @@ export default function HandoffMemoTool() {
       return;
     }
 
-    const nextMemo = generateHandoffMemo(transcript, new Date(), {
+    const createdAt = new Date();
+    const draftMemo = generateHandoffMemo(transcript, createdAt, {
       source: {
         source_mode: "chat-save",
         trigger_command: triggerCommand,
@@ -132,8 +206,30 @@ export default function HandoffMemoTool() {
         },
       },
     });
+    const sourceLogFile = saveSourceLog ? getSourceLogFilenameFromYamlFilename(draftMemo.filename) : null;
+    const nextMemo = generateHandoffMemo(transcript, createdAt, {
+      source: {
+        source_mode: "chat-save",
+        source_log_file: sourceLogFile,
+        trigger_command: triggerCommand,
+        anchor_text: getArchiveAnchorText(messages),
+        message_index: messages.length,
+        captured_range: {
+          before_messages: messages.length,
+          after_messages: 0,
+        },
+      },
+    });
     const nextYaml = memoToYaml(nextMemo);
-    finishGeneration(nextMemo, nextYaml, "チャット履歴からYAMLを生成しました。");
+    const nextSourceLog = saveSourceLog
+      ? buildSourceLogMarkdown({
+          sourceMode: "chat-save",
+          generatedAt: nextMemo.source?.saved_at ?? createdAt.toISOString(),
+          relatedYaml: nextMemo.filename,
+          messages,
+        })
+      : "";
+    finishGeneration(nextMemo, nextYaml, "チャット履歴からYAMLを生成しました。", nextSourceLog);
   }
 
   function sendChatMessage() {
@@ -191,16 +287,10 @@ export default function HandoffMemoTool() {
         setStatus("会話ログを貼り付けてください。");
         return;
       }
-      nextMemo = generateHandoffMemo(conversationLog, new Date(), {
-        source: {
-          source_mode: "bulk-convert",
-          captured_range: {
-            before_messages: conversationLog.trim().split(/\n+/).filter(Boolean).length,
-            after_messages: 0,
-          },
-        },
-      });
-      nextYaml = memoToYaml(nextMemo);
+      const generated = buildBulkMemo(conversationLog.trim());
+      nextMemo = generated.nextMemo;
+      nextYaml = generated.nextYaml;
+      setSourceLogText(generated.nextSourceLog);
       setMemo(nextMemo);
       setYamlText(nextYaml);
     }
@@ -226,6 +316,29 @@ export default function HandoffMemoTool() {
     }
     downloadYaml(getYamlDownloadFilename(yamlText), yamlText);
     setStatus("YAMLをダウンロードしました。");
+  }
+
+  function downloadSourceLog() {
+    if (!sourceLogText || !yamlText) {
+      setStatus("元ログがありません。先にYAMLを生成してください。");
+      return;
+    }
+    downloadTextFile(getSourceLogDownloadFilename(yamlText), sourceLogText, "text/markdown;charset=utf-8");
+    setStatus("元ログをダウンロードしました。");
+  }
+
+  function downloadBoth() {
+    if (!yamlText) {
+      setStatus("先にYAMLを生成してください。");
+      return;
+    }
+    downloadYaml(getYamlDownloadFilename(yamlText), yamlText);
+    if (sourceLogText) {
+      downloadTextFile(getSourceLogDownloadFilename(yamlText), sourceLogText, "text/markdown;charset=utf-8");
+      setStatus("YAMLと元ログをダウンロードしました。");
+      return;
+    }
+    setStatus("YAMLをダウンロードしました。元ログはありません。");
   }
 
   return (
@@ -370,6 +483,33 @@ export default function HandoffMemoTool() {
               />
               生成後に自動ダウンロード
             </label>
+            <label className="flex h-11 items-center gap-2 rounded-md border border-stone-300 bg-white px-4 text-sm font-bold">
+              <input
+                type="checkbox"
+                checked={saveSourceLog}
+                onChange={(event) => setSaveSourceLog(event.target.checked)}
+                className="h-4 w-4 accent-teal-700"
+              />
+              元ログも保存する
+            </label>
+            {sourceLogText && (
+              <>
+                <button
+                  type="button"
+                  onClick={downloadSourceLog}
+                  className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
+                >
+                  元ログをダウンロード
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadBoth}
+                  className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
+                >
+                  両方ダウンロード
+                </button>
+              </>
+            )}
           </div>
 
           <div className="rounded-md border border-stone-200 bg-white p-4 text-sm text-stone-700">

@@ -280,6 +280,28 @@ export function getYamlDownloadFilename(yamlText: string, fallbackDate = new Dat
   return getFallbackMemoFilename(fallbackDate);
 }
 
+export function getSourceLogFilenameFromYamlFilename(yamlFilename: string) {
+  const trimmed = yamlFilename.trim();
+  if (!trimmed) return getFallbackMemoFilename().replace(/\.yaml$/, ".source.md");
+  return trimmed.replace(/\.ya?ml$/i, ".source.md");
+}
+
+export function getSourceLogDownloadFilename(yamlText: string, fallbackDate = new Date()) {
+  try {
+    const parsed = yaml.load(yamlText);
+    if (parsed && typeof parsed === "object" && "source" in parsed) {
+      const source = (parsed as { source?: { source_log_file?: unknown } }).source;
+      if (source && typeof source.source_log_file === "string" && source.source_log_file.trim()) {
+        return source.source_log_file.trim();
+      }
+    }
+  } catch {
+    return getSourceLogFilenameFromYamlFilename(getFallbackMemoFilename(fallbackDate));
+  }
+
+  return getSourceLogFilenameFromYamlFilename(getYamlDownloadFilename(yamlText, fallbackDate));
+}
+
 export type ArchiveCommand = {
   command: "archive";
   trigger: "/archive" | "/保存";
