@@ -93,6 +93,10 @@ export default function HandoffMemoTool() {
     const nextMemo = generateHandoffMemo(source, new Date(), {
       source: {
         source_mode: "bulk-convert",
+        captured_range: {
+          before_messages: source.split(/\n+/).filter(Boolean).length,
+          after_messages: 0,
+        },
       },
     });
     const nextYaml = memoToYaml(nextMemo);
@@ -101,6 +105,12 @@ export default function HandoffMemoTool() {
 
   function buildChatTranscript(messages: ChatMessage[]) {
     return messages.map((message) => `${message.role === "user" ? "ユーザー" : "AI"}: ${message.text}`).join("\n");
+  }
+
+  function getArchiveAnchorText(messages: ChatMessage[]) {
+    const userMessage = [...messages].reverse().find((message) => message.role === "user");
+    const fallbackMessage = messages.at(-1);
+    return (userMessage?.text ?? fallbackMessage?.text ?? "").slice(0, 160);
   }
 
   function archiveChatHistory(messages: ChatMessage[], triggerCommand: "/archive" | "/保存") {
@@ -114,6 +124,12 @@ export default function HandoffMemoTool() {
       source: {
         source_mode: "chat-save",
         trigger_command: triggerCommand,
+        anchor_text: getArchiveAnchorText(messages),
+        message_index: messages.length,
+        captured_range: {
+          before_messages: messages.length,
+          after_messages: 0,
+        },
       },
     });
     const nextYaml = memoToYaml(nextMemo);
@@ -178,6 +194,10 @@ export default function HandoffMemoTool() {
       nextMemo = generateHandoffMemo(conversationLog, new Date(), {
         source: {
           source_mode: "bulk-convert",
+          captured_range: {
+            before_messages: conversationLog.trim().split(/\n+/).filter(Boolean).length,
+            after_messages: 0,
+          },
         },
       });
       nextYaml = memoToYaml(nextMemo);

@@ -6,9 +6,16 @@ export type HandoffMemo = {
   date: string;
   source?: {
     source_mode: "bulk-convert" | "chat-save";
+    conversation_id?: string | null;
+    source_log_file?: string | null;
     trigger_command?: "/archive" | "/保存";
     saved_at: string;
     anchor_text?: string;
+    message_index?: number;
+    captured_range?: {
+      before_messages: number;
+      after_messages: number;
+    };
   };
   summary: string;
   decisions: string[];
@@ -195,13 +202,29 @@ function monthString(date: string) {
 }
 
 function timestampString(date = new Date()) {
-  return date.toISOString();
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absoluteMinutes = Math.abs(offsetMinutes);
+  const hours = String(Math.floor(absoluteMinutes / 60)).padStart(2, "0");
+  const minutes = String(absoluteMinutes % 60).padStart(2, "0");
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  const second = String(date.getSeconds()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}${sign}${hours}:${minutes}`;
 }
 
 function getAnchorText(text: string) {
   const compacted = compactText(text);
   if (!compacted) return undefined;
-  return compacted.slice(0, 160);
+  const lines = compacted
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const lastLine = lines.at(-1) ?? compacted;
+  return lastLine.slice(0, 160);
 }
 
 function buildSource(
@@ -211,13 +234,25 @@ function buildSource(
 ): HandoffMemoSource | undefined {
   if (!source) return undefined;
 
-  const result: HandoffMemoSource = {
+  const baseSource = {
     source_mode: source.source_mode,
-    saved_at: source.saved_at ?? timestampString(now),
+    conversation_id: source.conversation_id ?? null,
+    source_log_file: source.source_log_file ?? null,
   };
-  if (source.trigger_command) result.trigger_command = source.trigger_command;
+  const result: HandoffMemoSource = source.trigger_command
+    ? {
+        ...baseSource,
+        trigger_command: source.trigger_command,
+        saved_at: source.saved_at ?? timestampString(now),
+      }
+    : {
+        ...baseSource,
+        saved_at: source.saved_at ?? timestampString(now),
+      };
   const anchorText = source.anchor_text ?? getAnchorText(text);
   if (anchorText) result.anchor_text = anchorText;
+  if (typeof source.message_index === "number") result.message_index = source.message_index;
+  if (source.captured_range) result.captured_range = source.captured_range;
   return result;
 }
 
