@@ -46,7 +46,7 @@ type ChatMessage = {
 };
 
 type OutputTab = "yaml" | "source";
-type InputTab = "memo-save" | "log-save" | "memo-create";
+type InputTab = "memo-save" | "log-save" | "prompt" | "memo-create";
 
 type SourceInfo = {
   platform: string;
@@ -272,7 +272,6 @@ export default function HandoffMemoTool() {
   const currentSourceLogFilename = sourceLogFilename || getSourceOnlyDownloadFilename();
   const activeFilename =
     activeInputTab === "log-save" ? currentSourceLogFilename : memo?.filename ?? (currentYamlFilename || "未生成");
-  const activeType = activeInputTab === "log-save" ? "Markdown" : memo?.type ?? "YAML";
 
   function selectInputTab(tab: InputTab) {
     setActiveInputTab(tab);
@@ -622,17 +621,18 @@ export default function HandoffMemoTool() {
       <main className="mx-auto grid max-w-6xl gap-5 px-5 py-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
         <section className="space-y-4">
           <div className="rounded-md border border-stone-200 bg-white p-4">
-            <div className="flex rounded-md border border-stone-300 bg-stone-100 p-1">
+            <div className="grid gap-1 rounded-md border border-stone-300 bg-stone-100 p-1 sm:grid-cols-2 xl:grid-cols-4">
               {([
                 ["memo-save", "知識メモ保存（YAML）"],
                 ["log-save", "会話ログ保存（Markdown）"],
+                ["prompt", "しおりプロンプト"],
                 ["memo-create", "知識メモ作成"],
               ] as const).map(([tab, label]) => (
                 <button
                   key={tab}
                   type="button"
                   onClick={() => selectInputTab(tab)}
-                  className={`h-9 flex-1 rounded px-3 text-sm font-bold ${
+                  className={`min-h-10 rounded px-3 py-2 text-sm font-bold ${
                     activeInputTab === tab ? "bg-stone-950 text-white" : "text-stone-600 hover:bg-white"
                   }`}
                 >
@@ -641,21 +641,228 @@ export default function HandoffMemoTool() {
               ))}
             </div>
 
-            <div className="mt-4 rounded-md border border-teal-100 bg-teal-50 p-3">
-              <p className="text-sm font-bold text-stone-950">プロンプト</p>
-              <p className="mt-1 text-xs leading-5 text-stone-600">
-                ChatGPT / Claude / Gemini のカスタム指示や会話冒頭に貼り付けて、/しおり や /archive 出力を使えるようにします。
-              </p>
+            {activeInputTab === "memo-save" && (
+              <div className="mt-4">
+                <label htmlFor="memo-save-input" className="text-sm font-bold">
+                  知識メモ保存（YAML）
+                </label>
+                <p className="mt-1 text-sm leading-6 text-stone-600">
+                  ChatGPT、Claude、Geminiなどで生成した知識メモを貼り付けて保存します。filename が含まれる場合はその名前で保存します。
+                </p>
+                <textarea
+                  id="memo-save-input"
+                  value={yamlText}
+                  onChange={(event) => {
+                    setYamlText(event.target.value);
+                    setMemo(null);
+                    setActiveOutputTab("yaml");
+                  }}
+                  className="mt-2 min-h-[430px] w-full resize-y rounded-md border border-stone-300 bg-white p-4 font-mono text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+                  placeholder="filename: example.yaml"
+                  spellCheck={false}
+                />
+                <div className="mt-3 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={loadCurrentInput}
+                    className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
+                  >
+                    読み込み
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {activeInputTab === "log-save" && (
+              <div className="mt-4">
+                <label htmlFor="log-save-input" className="text-sm font-bold">
+                  会話ログ保存（Markdown）
+                </label>
+                <p className="mt-1 text-sm leading-6 text-stone-600">
+                  ChatGPT、Claude、Geminiなどで生成した会話ログを貼り付けて保存します。Markdown形式のまま .md ファイルとして扱います。
+                </p>
+                <textarea
+                  id="log-save-input"
+                  value={sourceLogText}
+                  onChange={(event) => {
+                    setSourceLogText(event.target.value);
+                    setSourceLogFilename((filename) => filename || getSourceOnlyDownloadFilename());
+                    setActiveOutputTab("source");
+                  }}
+                  className="mt-2 min-h-[430px] w-full resize-y rounded-md border border-stone-300 bg-white p-4 font-mono text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+                  placeholder="# Source Conversation"
+                  spellCheck={false}
+                />
+                <div className="mt-3 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={loadCurrentInput}
+                    className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
+                  >
+                    読み込み
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {activeInputTab === "prompt" && (
+              <div className="mt-4 rounded-md border border-teal-100 bg-teal-50 p-4">
+                <p className="text-sm font-bold text-stone-950">しおりプロンプト</p>
+                <p className="mt-1 text-sm leading-6 text-stone-600">
+                  ChatGPT / Claude / Gemini のカスタム指示や会話冒頭に貼り付けて、/しおり や /archive 出力を使えるようにします。
+                </p>
+                <button
+                  type="button"
+                  onClick={copyShioriPrompt}
+                  className="mt-3 h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
+                >
+                  しおりプロンプトをコピー
+                </button>
+                <p className="mt-2 text-xs font-semibold text-stone-600">{status || "待機中"}</p>
+              </div>
+            )}
+
+            {activeInputTab === "memo-create" && (
+              <div className="mt-4">
+                <label htmlFor="conversation-log" className="text-sm font-bold">
+                  知識メモ作成
+                </label>
+                <p className="mt-1 text-sm leading-6 text-stone-600">
+                  会話ログ、個人メモ、アイデアメモ、note下書き、設計メモなどを貼り付け、再利用しやすい知識メモに変換します。
+                </p>
+                <textarea
+                  id="conversation-log"
+                  value={conversationLog}
+                  onChange={(event) => setConversationLog(event.target.value)}
+                  className="mt-2 min-h-[430px] w-full resize-y rounded-md border border-stone-300 bg-white p-4 font-mono text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+                  placeholder="知識メモに変換したい内容をここに貼り付け"
+                />
+                <div className="mt-3 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={generate}
+                    className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
+                  >
+                    知識メモを作成
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConversationLog(sampleLog)}
+                    className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
+                  >
+                    サンプル入力
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {activeInputTab !== "prompt" && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-md border border-stone-200 bg-white p-4">
+                <p className="text-xs font-semibold text-stone-500">filename</p>
+                <p className="mt-2 break-words text-sm font-bold">{activeFilename}</p>
+              </div>
+              <div className="rounded-md border border-stone-200 bg-white p-4">
+                <p className="text-xs font-semibold text-stone-500">status</p>
+                <p className="mt-2 text-sm font-bold">{status || "待機中"}</p>
+              </div>
+            </div>
+          )}
+
+          {activeInputTab !== "prompt" && (
+            <div className="flex flex-wrap items-start gap-3">
               <button
                 type="button"
-                onClick={copyShioriPrompt}
-                className="mt-3 h-10 rounded-md bg-teal-700 px-4 text-sm font-bold text-white hover:bg-teal-800"
+                onClick={chooseDirectory}
+                className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
               >
-                しおりプロンプトをコピー
+                保存先フォルダを選択
               </button>
+              <div className="min-w-[180px]">
+                <button
+                  type="button"
+                  onClick={save}
+                  className="h-11 rounded-md bg-stone-950 px-5 text-sm font-bold text-white hover:bg-stone-800"
+                >
+                  📁 フォルダに保存
+                </button>
+                <p className="mt-1 text-xs font-medium text-stone-500">選択したフォルダへ保存します</p>
+              </div>
+              <div className="min-w-[220px]">
+                <button
+                  type="button"
+                  onClick={download}
+                  className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
+                >
+                  ⬇️ ダウンロード
+                </button>
+                <p className="mt-1 text-xs font-medium text-stone-500">ブラウザのダウンロードフォルダへ保存します</p>
+              </div>
+              {activeInputTab === "memo-create" && (
+                <label className="flex h-11 items-center gap-2 rounded-md border border-stone-300 bg-white px-4 text-sm font-bold">
+                  <input
+                    type="checkbox"
+                    checked={autoDownload}
+                    onChange={(event) => setAutoDownload(event.target.checked)}
+                    className="h-4 w-4 accent-teal-700"
+                  />
+                  作成後に自動ダウンロード
+                </label>
+              )}
+              {activeInputTab === "memo-create" && (
+                <label className="flex h-11 items-center gap-2 rounded-md border border-stone-300 bg-white px-4 text-sm font-bold">
+                  <input
+                    type="checkbox"
+                    checked={saveSourceLog}
+                    onChange={(event) => setSaveSourceLog(event.target.checked)}
+                    className="h-4 w-4 accent-teal-700"
+                  />
+                  会話ログも保存する
+                </label>
+              )}
+              {sourceLogText && activeInputTab !== "log-save" && (
+                <>
+                  <button
+                    type="button"
+                    onClick={downloadSourceLog}
+                    className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
+                  >
+                    会話ログをダウンロード
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadBoth}
+                    className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
+                  >
+                    両方ダウンロード
+                  </button>
+                </>
+              )}
             </div>
+          )}
 
-            <div className="mt-4 rounded-md border border-stone-200 bg-stone-50 p-3">
+          {activeInputTab !== "prompt" && (
+            <div className="rounded-md border border-stone-200 bg-white p-4 text-sm text-stone-700">
+              <p className="font-semibold text-stone-950">保存先</p>
+              <p className="mt-1 font-bold text-stone-950">
+                {directoryHandle ? directoryName || "選択済みフォルダ" : "未選択"}
+              </p>
+              <p className="mt-1">
+                {directoryHandle
+                  ? activeInputTab === "log-save"
+                    ? "選択済みフォルダ / YYYY-MM / filename.md"
+                    : "選択済みフォルダ / YYYY-MM / filename.yaml"
+                  : "未選択の場合はブラウザのダウンロードフォルダへ保存"}
+              </p>
+              <p className="mt-2 text-stone-500">
+                フォルダ指定に未対応のブラウザでは、ダウンロード保存を使います。
+              </p>
+            </div>
+          )}
+
+          {activeInputTab !== "prompt" && (
+            <div className="rounded-md border border-stone-200 bg-stone-50 p-3">
               <p className="text-sm font-bold text-stone-950">保存情報入力欄</p>
               <p className="mt-1 text-xs leading-5 text-stone-500">
                 元のチャットを後から見つけやすくするための任意情報です。空欄でも従来通り保存できます。
@@ -723,216 +930,10 @@ export default function HandoffMemoTool() {
                 />
               </div>
             </div>
-
-            {activeInputTab === "memo-save" && (
-              <div className="mt-4">
-                <label htmlFor="memo-save-input" className="text-sm font-bold">
-                  知識メモ保存（YAML）
-                </label>
-                <p className="mt-1 text-sm leading-6 text-stone-600">
-                  ChatGPT、Claude、Geminiなどで生成した知識メモを貼り付けて保存します。filename が含まれる場合はその名前で保存します。
-                </p>
-                <textarea
-                  id="memo-save-input"
-                  value={yamlText}
-                  onChange={(event) => {
-                    setYamlText(event.target.value);
-                    setMemo(null);
-                    setActiveOutputTab("yaml");
-                  }}
-                  className="mt-2 min-h-[520px] w-full resize-y rounded-md border border-stone-300 bg-white p-4 font-mono text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                  placeholder="filename: example.yaml"
-                  spellCheck={false}
-                />
-                <div className="mt-3 flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    onClick={loadCurrentInput}
-                    className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
-                  >
-                    読み込み
-                  </button>
-                </div>
-                <p className="mt-2 break-words text-xs font-semibold text-stone-500">
-                  保存ファイル名: {currentYamlFilename || "YYYY-MM-DD_ai-handoff-memo.yaml"}
-                </p>
-              </div>
-            )}
-
-            {activeInputTab === "log-save" && (
-              <div className="mt-4">
-                <label htmlFor="log-save-input" className="text-sm font-bold">
-                  会話ログ保存（Markdown）
-                </label>
-                <p className="mt-1 text-sm leading-6 text-stone-600">
-                  ChatGPT、Claude、Geminiなどで生成した会話ログを貼り付けて保存します。Markdown形式のまま .md ファイルとして扱います。
-                </p>
-                <textarea
-                  id="log-save-input"
-                  value={sourceLogText}
-                  onChange={(event) => {
-                    setSourceLogText(event.target.value);
-                    setSourceLogFilename((filename) => filename || getSourceOnlyDownloadFilename());
-                    setActiveOutputTab("source");
-                  }}
-                  className="mt-2 min-h-[520px] w-full resize-y rounded-md border border-stone-300 bg-white p-4 font-mono text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                  placeholder="# Source Conversation"
-                  spellCheck={false}
-                />
-                <div className="mt-3 flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    onClick={loadCurrentInput}
-                    className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
-                  >
-                    読み込み
-                  </button>
-                </div>
-                <p className="mt-2 break-words text-xs font-semibold text-stone-500">
-                  保存ファイル名: {currentSourceLogFilename}
-                </p>
-              </div>
-            )}
-
-            {activeInputTab === "memo-create" && (
-              <div className="mt-4">
-                <label htmlFor="conversation-log" className="text-sm font-bold">
-                  知識メモ作成
-                </label>
-                <p className="mt-1 text-sm leading-6 text-stone-600">
-                  会話ログ、個人メモ、アイデアメモ、note下書き、設計メモなどを貼り付け、再利用しやすい知識メモに変換します。
-                </p>
-                <textarea
-                  id="conversation-log"
-                  value={conversationLog}
-                  onChange={(event) => setConversationLog(event.target.value)}
-                  className="mt-2 min-h-[520px] w-full resize-y rounded-md border border-stone-300 bg-white p-4 font-mono text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                  placeholder="知識メモに変換したい内容をここに貼り付け"
-                />
-                <div className="mt-3 flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    onClick={generate}
-                    className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
-                  >
-                    知識メモを作成
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConversationLog(sampleLog)}
-                    className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
-                  >
-                    サンプル入力
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-start gap-3">
-            <button
-              type="button"
-              onClick={chooseDirectory}
-              className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
-            >
-              保存先フォルダを選択
-            </button>
-            <div className="min-w-[180px]">
-              <button
-                type="button"
-                onClick={save}
-                className="h-11 rounded-md bg-stone-950 px-5 text-sm font-bold text-white hover:bg-stone-800"
-              >
-                📁 フォルダに保存
-              </button>
-              <p className="mt-1 text-xs font-medium text-stone-500">選択したフォルダへ保存します</p>
-            </div>
-            <div className="min-w-[220px]">
-              <button
-                type="button"
-                onClick={download}
-                className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
-              >
-                ⬇️ ダウンロード
-              </button>
-              <p className="mt-1 text-xs font-medium text-stone-500">ブラウザのダウンロードフォルダへ保存します</p>
-            </div>
-            {activeInputTab === "memo-create" && (
-              <label className="flex h-11 items-center gap-2 rounded-md border border-stone-300 bg-white px-4 text-sm font-bold">
-                <input
-                  type="checkbox"
-                  checked={autoDownload}
-                  onChange={(event) => setAutoDownload(event.target.checked)}
-                  className="h-4 w-4 accent-teal-700"
-                />
-                作成後に自動ダウンロード
-              </label>
-            )}
-            {activeInputTab === "memo-create" && (
-              <label className="flex h-11 items-center gap-2 rounded-md border border-stone-300 bg-white px-4 text-sm font-bold">
-                <input
-                  type="checkbox"
-                  checked={saveSourceLog}
-                  onChange={(event) => setSaveSourceLog(event.target.checked)}
-                  className="h-4 w-4 accent-teal-700"
-                />
-                会話ログも保存する
-              </label>
-            )}
-            {sourceLogText && activeInputTab !== "log-save" && (
-              <>
-                <button
-                  type="button"
-                  onClick={downloadSourceLog}
-                  className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
-                >
-                  会話ログをダウンロード
-                </button>
-                <button
-                  type="button"
-                  onClick={downloadBoth}
-                  className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
-                >
-                  両方ダウンロード
-                </button>
-              </>
-            )}
-          </div>
-
-          <div className="rounded-md border border-stone-200 bg-white p-4 text-sm text-stone-700">
-            <p className="font-semibold text-stone-950">保存先</p>
-            <p className="mt-1 font-bold text-stone-950">
-              {directoryHandle ? directoryName || "選択済みフォルダ" : "未選択"}
-            </p>
-            <p className="mt-1">
-              {directoryHandle
-                ? activeInputTab === "log-save"
-                  ? "選択済みフォルダ / YYYY-MM / filename.md"
-                  : "選択済みフォルダ / YYYY-MM / filename.yaml"
-                : "未選択の場合はブラウザのダウンロードフォルダへ保存"}
-            </p>
-            <p className="mt-2 text-stone-500">
-              フォルダ指定に未対応のブラウザでは、ダウンロード保存を使います。
-            </p>
-          </div>
+          )}
         </section>
 
         <section className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-md border border-stone-200 bg-white p-4">
-              <p className="text-xs font-semibold text-stone-500">filename</p>
-              <p className="mt-2 break-words text-sm font-bold">{activeFilename}</p>
-            </div>
-            <div className="rounded-md border border-stone-200 bg-white p-4">
-              <p className="text-xs font-semibold text-stone-500">format / type</p>
-              <p className="mt-2 text-sm font-bold">{activeType}</p>
-            </div>
-            <div className="rounded-md border border-stone-200 bg-white p-4">
-              <p className="text-xs font-semibold text-stone-500">status</p>
-              <p className="mt-2 text-sm font-bold">{status || "待機中"}</p>
-            </div>
-          </div>
-
           <div>
             <label htmlFor="yaml-output" className="text-sm font-bold">
               出力プレビュー
