@@ -94,7 +94,7 @@ async function writeYamlTextToDirectory(directory: WritableDirectoryHandle, yaml
 }
 
 export default function HandoffMemoTool() {
-  const [activeInputTab, setActiveInputTab] = useState<InputTab>("bulk");
+  const [activeInputTab, setActiveInputTab] = useState<InputTab>("yaml-save");
   const [conversationLog, setConversationLog] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -431,9 +431,9 @@ export default function HandoffMemoTool() {
           <div className="rounded-md border border-stone-200 bg-white p-4">
             <div className="flex rounded-md border border-stone-300 bg-stone-100 p-1">
               {([
-                ["bulk", "一括変換"],
-                ["chat", "チャット保存"],
                 ["yaml-save", "知識メモ保存"],
+                ["chat", "チャット保存"],
+                ["bulk", "一括変換"],
               ] as const).map(([tab, label]) => (
                 <button
                   key={tab}
@@ -572,7 +572,7 @@ export default function HandoffMemoTool() {
             )}
           </div>
 
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap items-start gap-3">
             <button
               type="button"
               onClick={chooseDirectory}
@@ -580,20 +580,26 @@ export default function HandoffMemoTool() {
             >
               保存先フォルダ
             </button>
-            <button
-              type="button"
-              onClick={save}
-              className="h-11 rounded-md bg-stone-950 px-5 text-sm font-bold text-white hover:bg-stone-800"
-            >
-              保存
-            </button>
-            <button
-              type="button"
-              onClick={download}
-              className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
-            >
-              ダウンロード
-            </button>
+            <div className="min-w-[180px]">
+              <button
+                type="button"
+                onClick={save}
+                className="h-11 rounded-md bg-stone-950 px-5 text-sm font-bold text-white hover:bg-stone-800"
+              >
+                📁 フォルダに保存
+              </button>
+              <p className="mt-1 text-xs font-medium text-stone-500">選択したフォルダへ保存します</p>
+            </div>
+            <div className="min-w-[220px]">
+              <button
+                type="button"
+                onClick={download}
+                className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
+              >
+                ⬇️ ダウンロード
+              </button>
+              <p className="mt-1 text-xs font-medium text-stone-500">ブラウザのダウンロードフォルダへ保存します</p>
+            </div>
             <label className="flex h-11 items-center gap-2 rounded-md border border-stone-300 bg-white px-4 text-sm font-bold">
               <input
                 type="checkbox"
