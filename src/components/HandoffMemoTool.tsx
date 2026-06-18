@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   generateHandoffMemo,
   getMemoMonthFolder,
@@ -12,6 +12,9 @@ import {
 } from "@/lib/handoffMemo";
 
 type WritableDirectoryHandle = {
+  name?: string;
+  queryPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<PermissionState>;
+  requestPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<PermissionState>;
   getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<WritableDirectoryHandle>;
   getFileHandle(name: string, options?: { create?: boolean }): Promise<{
     createWritable(): Promise<{
@@ -43,6 +46,10 @@ type ChatMessage = {
 type OutputTab = "yaml" | "source";
 type InputTab = "memo-save" | "log-save" | "memo-create";
 
+const DIRECTORY_DB_NAME = "ai-conversation-archive";
+const DIRECTORY_STORE_NAME = "settings";
+const DIRECTORY_HANDLE_KEY = "directoryHandle";
+
 function downloadTextFile(filename: string, text: string, type = "text/plain;charset=utf-8") {
   const blob = new Blob([text], { type });
   const url = URL.createObjectURL(blob);
@@ -57,6 +64,65 @@ function downloadTextFile(filename: string, text: string, type = "text/plain;cha
 
 function downloadYaml(filename: string, yamlText: string) {
   downloadTextFile(filename, yamlText, "text/yaml;charset=utf-8");
+}
+
+function openDirectoryDatabase() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(DIRECTORY_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(DIRECTORY_STORE_NAME);
+    };
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+  });
+}
+
+async function saveDirectoryHandle(handle: WritableDirectoryHandle) {
+  const database = await openDirectoryDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(DIRECTORY_STORE_NAME, "readwrite");
+    const store = transaction.objectStore(DIRECTORY_STORE_NAME);
+    const request = store.put(handle, DIRECTORY_HANDLE_KEY);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      database.close();
+      reject(transaction.error);
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function loadDirectoryHandle() {
+  const database = await openDirectoryDatabase();
+  return new Promise<WritableDirectoryHandle | null>((resolve, reject) => {
+    const transaction = database.transaction(DIRECTORY_STORE_NAME, "readonly");
+    const store = transaction.objectStore(DIRECTORY_STORE_NAME);
+    const request = store.get(DIRECTORY_HANDLE_KEY);
+    request.onsuccess = () => {
+      database.close();
+      resolve((request.result as WritableDirectoryHandle | undefined) ?? null);
+    };
+    transaction.onerror = () => {
+      database.close();
+      reject(transaction.error);
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function getDirectoryPermission(handle: WritableDirectoryHandle) {
+  if (!handle.queryPermission) return "granted";
+  return handle.queryPermission({ mode: "readwrite" });
+}
+
+async function ensureDirectoryPermission(handle: WritableDirectoryHandle) {
+  const currentPermission = await getDirectoryPermission(handle);
+  if (currentPermission === "granted") return true;
+  if (!handle.requestPermission) return false;
+  return (await handle.requestPermission({ mode: "readwrite" })) === "granted";
 }
 
 function formatMarkdownTimestamp(date = new Date()) {
@@ -106,6 +172,7 @@ export default function HandoffMemoTool() {
   const [memo, setMemo] = useState<HandoffMemo | null>(null);
   const [yamlText, setYamlText] = useState("");
   const [directoryHandle, setDirectoryHandle] = useState<WritableDirectoryHandle | null>(null);
+  const [directoryName, setDirectoryName] = useState("");
   const [status, setStatus] = useState("");
   const [autoDownload, setAutoDownload] = useState(false);
   const [saveSourceLog, setSaveSourceLog] = useState(true);
@@ -122,6 +189,38 @@ export default function HandoffMemoTool() {
     setActiveInputTab(tab);
     setActiveOutputTab(tab === "log-save" ? "source" : "yaml");
   }
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function restoreDirectory() {
+      if (!("indexedDB" in window)) return;
+
+      try {
+        const savedHandle = await loadDirectoryHandle();
+        if (!savedHandle || !isMounted) return;
+
+        setDirectoryHandle(savedHandle);
+        setDirectoryName(savedHandle.name ?? "選択済みフォルダ");
+
+        const permission = await getDirectoryPermission(savedHandle);
+        if (!isMounted) return;
+        setStatus(
+          permission === "granted"
+            ? "保存先フォルダを復元しました。"
+            : "保存先フォルダを復元しました。保存時にアクセス許可が必要です。",
+        );
+      } catch {
+        if (isMounted) setStatus("保存先フォルダの復元に失敗しました。");
+      }
+    }
+
+    restoreDirectory();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   function finishGeneration(nextMemo: HandoffMemo, nextYaml: string, message: string, nextSourceLog = "") {
     setMemo(nextMemo);
@@ -222,7 +321,9 @@ export default function HandoffMemoTool() {
     try {
       const handle = await window.showDirectoryPicker();
       setDirectoryHandle(handle);
-      setStatus("保存先フォルダを選択しました。");
+      setDirectoryName(handle.name ?? "選択済みフォルダ");
+      await saveDirectoryHandle(handle);
+      setStatus("保存先フォルダを選択し、次回起動用に保存しました。");
     } catch {
       setStatus("フォルダ選択をキャンセルしました。");
     }
@@ -265,6 +366,10 @@ export default function HandoffMemoTool() {
     const monthFolder = formatMarkdownTimestamp().slice(0, 7);
     if (directoryHandle) {
       try {
+        if (!(await ensureDirectoryPermission(directoryHandle))) {
+          setStatus("保存先フォルダへのアクセスが許可されていません。");
+          return;
+        }
         await writeTextToDirectory(directoryHandle, filename, nextSourceLog, monthFolder);
         setStatus(`${monthFolder}/${filename} に保存しました。`);
         return;
@@ -307,6 +412,10 @@ export default function HandoffMemoTool() {
 
     if (directoryHandle) {
       try {
+        if (!(await ensureDirectoryPermission(directoryHandle))) {
+          setStatus("保存先フォルダへのアクセスが許可されていません。");
+          return;
+        }
         const monthFolder = nextMemo ? getMemoMonthFolder(nextMemo) : formatMarkdownTimestamp().slice(0, 7);
         if (nextMemo) {
           await writeYamlToDirectory(directoryHandle, nextMemo, nextYaml);
@@ -575,6 +684,9 @@ export default function HandoffMemoTool() {
 
           <div className="rounded-md border border-stone-200 bg-white p-4 text-sm text-stone-700">
             <p className="font-semibold text-stone-950">保存先</p>
+            <p className="mt-1 font-bold text-stone-950">
+              {directoryHandle ? directoryName || "選択済みフォルダ" : "未選択"}
+            </p>
             <p className="mt-1">
               {directoryHandle
                 ? activeInputTab === "log-save"
