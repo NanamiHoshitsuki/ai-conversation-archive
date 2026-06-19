@@ -626,6 +626,8 @@ export default function HandoffMemoTool() {
     activeInputTab === "log-save"
       ? currentSourceLogFilename
       : currentYamlFilename || conversationTitleFilename || memo?.filename || t.standby;
+  const canDownloadSourceLog = Boolean(sourceLogText.trim());
+  const canDownloadBoth = Boolean(yamlText.trim() && sourceLogText.trim());
   const activePrompt =
     activePromptVariant === "simple"
       ? language === "en"
@@ -879,18 +881,19 @@ export default function HandoffMemoTool() {
   }
 
   async function save() {
-    if (activeInputTab === "log-save") {
+    if (activeInputTab === "log-save" && !yamlText.trim()) {
       await saveSourceLogFile();
       return;
     }
 
-    if (!yamlText.trim() && (activeInputTab === "memo-save" || !conversationLog.trim())) {
+    if (!yamlText.trim() && !sourceLogText.trim() && (activeInputTab === "memo-save" || !conversationLog.trim())) {
       setStatus(t.emptyContent);
       return;
     }
 
     let nextMemo = activeInputTab === "memo-save" ? null : memo;
     let nextYaml = mergeSourceMetadataIntoYaml(yamlText, sourceInfo);
+    let nextSourceLogText = sourceLogText;
     const isPastedYaml = activeInputTab === "memo-save";
 
     if (!nextYaml.trim()) {
@@ -905,6 +908,7 @@ export default function HandoffMemoTool() {
       const generated = buildBulkMemo(conversationLog.trim());
       nextMemo = generated.nextMemo;
       nextYaml = generated.nextYaml;
+      nextSourceLogText = generated.nextSourceLog;
       setSourceLogText(generated.nextSourceLog);
       setSourceLogFilename(generated.nextSourceLog ? getSourceLogDownloadFilename(nextYaml) : "");
       setMemo(nextMemo);
@@ -931,7 +935,7 @@ export default function HandoffMemoTool() {
         }
         setYamlText(nextYaml);
         const yamlFilename = getYamlDownloadFilename(nextYaml);
-        const nextSourceLog = sourceLogText ? mergeSourceMetadataIntoMarkdown(sourceLogText, sourceInfo).trim() : "";
+        const nextSourceLog = nextSourceLogText ? mergeSourceMetadataIntoMarkdown(nextSourceLogText, sourceInfo).trim() : "";
         if (nextSourceLog) {
           const sourceFilename = sourceLogFilename || getSourceLogDownloadFilename(nextYaml);
           const isSourceEmptyFile = await writeTextToDirectory(directoryHandle, sourceFilename, nextSourceLog, monthFolder);
@@ -954,6 +958,17 @@ export default function HandoffMemoTool() {
 
     setYamlText(nextYaml);
     downloadYaml(getYamlDownloadFilename(nextYaml), nextYaml);
+    if (nextSourceLogText) {
+      const nextSourceLog = mergeSourceMetadataIntoMarkdown(nextSourceLogText, sourceInfo);
+      setSourceLogText(nextSourceLog);
+      downloadTextFile(
+        sourceLogFilename || getSourceLogDownloadFilename(nextYaml),
+        nextSourceLog,
+        "text/markdown;charset=utf-8",
+      );
+      setStatus(t.bothDownloaded);
+      return;
+    }
     setStatus(t.memoDownloaded);
   }
 
@@ -1361,7 +1376,7 @@ export default function HandoffMemoTool() {
                   {t.alsoSaveLog}
                 </label>
               )}
-              {sourceLogText && activeInputTab !== "log-save" && (
+              {canDownloadSourceLog && (
                 <>
                   <button
                     type="button"
@@ -1370,6 +1385,10 @@ export default function HandoffMemoTool() {
                   >
                     {t.downloadLog}
                   </button>
+                </>
+              )}
+              {canDownloadBoth && (
+                <>
                   <button
                     type="button"
                     onClick={downloadBoth}

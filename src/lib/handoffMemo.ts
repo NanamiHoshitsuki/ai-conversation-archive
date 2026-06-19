@@ -56,6 +56,8 @@ export const HANDOFF_MEMO_SYSTEM_PROMPT = `
 - title
 - filename
 - date
+- source
+- source.platform
 - summary
 - decisions
 - next_actions

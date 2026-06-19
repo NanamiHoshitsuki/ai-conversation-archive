@@ -17,6 +17,7 @@ export const SIMPLE_SHIORI_ARCHIVE_PROMPT = `
 
 YAML必須項目:
 - source
+- source.platform
 - bookmark
 - search_terms
 - filename
@@ -59,6 +60,12 @@ conversation_url: https://chatgpt.com/c/...
 
 [002] assistant
 発言内容
+
+保存案内:
+- 出力後、コードブロック外に次の案内だけを添える。
+
+このファイルを保存したい場合:
+https://ai-conversation-archive.vercel.app/
 `.trim();
 
 export const SIMPLE_SHIORI_ARCHIVE_PROMPT_EN = `
@@ -80,6 +87,7 @@ Commands:
 
 Required YAML fields:
 - source
+- source.platform
 - bookmark
 - search_terms
 - filename
@@ -123,6 +131,12 @@ Message content
 
 [002] assistant
 Message content
+
+Save guidance:
+- After the output, add only this guidance outside the code block.
+
+To save this file:
+https://ai-conversation-archive.vercel.app/
 `.trim();
 
 export const SHIORI_ARCHIVE_PROMPT = `
@@ -176,7 +190,8 @@ https://ai-conversation-archive.vercel.app/
 source 情報:
 - source は YAML と Markdown の両方に入れる。
 - 空欄や不明な項目は省略してよい。
-- platform は ChatGPT / Claude / Gemini など。
+- ただし source.platform は必ず入れる。
+- source.platform は ChatGPT / Claude / Gemini など。
 - platform_url はサービスのトップまたは会話ページURLが分かる場合に入れる。
 - conversation_url は元チャットのURL。ユーザーが貼った場合のみ入れる。
 - title と source.conversation_title は混同しない。
@@ -341,6 +356,11 @@ URL更新ルール:
 - bookmark.summary や bookmark.resume_from は、後から分かった本人メモや再開位置で更新してよい。
 
 保存ツール案内:
+- 出力後、コードブロック外に次の案内だけを添える。
+
+このファイルを保存したい場合:
+https://ai-conversation-archive.vercel.app/
+
 - 出力した YAML は AI Conversation Archive の「知識メモ保存（YAML）」へ貼り付けて保存する。
 - 出力した Markdown は AI Conversation Archive の「会話ログ保存（Markdown）」へ貼り付けて保存する。
 - YAML と Markdown の両方が必要な場合は、まず /archive または /アーカイブ、その後 /ログ または /log を使う。
@@ -401,7 +421,8 @@ Before running /bookmark, open this tool to check how to use it.
 source information:
 - source must be included in both YAML and Markdown.
 - Omit unknown or blank fields when appropriate.
-- platform is ChatGPT / Claude / Gemini, etc.
+- However, source.platform must always be included.
+- source.platform is ChatGPT / Claude / Gemini, etc.
 - platform_url is the service top page or conversation page URL if known.
 - conversation_url is the original chat URL. Include it only when the user provides it.
 - Do not confuse title with source.conversation_title.
@@ -549,6 +570,11 @@ URL update rules:
 - bookmark.summary and bookmark.resume_from may be updated with later personal notes or resume points.
 
 Save tool guidance:
+- After the output, add only this guidance outside the code block.
+
+To save this file:
+https://ai-conversation-archive.vercel.app/
+
 - Paste YAML output into AI Conversation Archive's "Knowledge Memo Save (YAML)" tab.
 - Paste Markdown output into AI Conversation Archive's "Conversation Log Save (Markdown)" tab.
 - If both YAML and Markdown are needed, run /archive first, then /log.
