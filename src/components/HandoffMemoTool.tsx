@@ -505,10 +505,14 @@ function getConversationTitleFilename(sourceInfo: SourceInfo) {
 function sourceMetadataLines(sourceInfo: SourceInfo) {
   const source = buildSourceMetadata(sourceInfo);
   const lines = [`saved_at: ${source.saved_at ?? formatSourceTimestamp()}`];
-  if (source.platform) lines.push(`platform: ${source.platform}`);
+  if (source.platform) {
+    lines.push(`platform: ${source.platform}`);
+    if (source.platform.toLowerCase() === "chatgpt") {
+      lines.push("platform_url: https://chatgpt.com/");
+    }
+  }
   if (source.conversation_title) lines.push(`conversation_title: ${source.conversation_title}`);
   if (source.conversation_url) lines.push(`conversation_url: ${source.conversation_url}`);
-  if (sourceInfo.bookmark.trim()) lines.push("", "bookmark:", sourceInfo.bookmark.trim());
   return lines;
 }
 
@@ -592,39 +596,56 @@ function mergeSourceMetadataIntoYaml(yamlText: string, sourceInfo: SourceInfo) {
   }
 }
 
-function mergeSourceMetadataIntoMarkdown(markdownText: string, sourceInfo: SourceInfo) {
-  const sourceLines = sourceMetadataLines(sourceInfo);
+function getSourceMarkdownBody(markdownText: string) {
   const normalized = markdownText.trimStart();
-  if (normalized.startsWith("# Source Conversation")) {
-    const [, ...rest] = normalized.split("\n");
-    let index = 0;
-    let consumedMetadata = false;
+  if (!normalized.startsWith("# Source Conversation")) {
+    return normalized.trimEnd();
+  }
 
-    while (index < rest.length && !rest[index].trim()) index += 1;
-    while (index < rest.length) {
-      const line = rest[index].trim();
-      if (/^(saved_at|platform|conversation_title|conversation_url):/.test(line)) {
-        consumedMetadata = true;
-        index += 1;
-        continue;
-      }
-      if (line === "bookmark:") {
-        consumedMetadata = true;
-        index += 1;
-        while (index < rest.length && rest[index].trim()) index += 1;
-        continue;
-      }
-      if (!line && consumedMetadata) {
-        index += 1;
-        break;
-      }
+  const [, ...rest] = normalized.split("\n");
+  let index = 0;
+  let consumedMetadata = false;
+
+  while (index < rest.length && !rest[index].trim()) index += 1;
+
+  while (index < rest.length) {
+    const line = rest[index].trim();
+    if (line === "---") {
+      index += 1;
+      consumedMetadata = true;
       break;
     }
-
-    const contentLines = consumedMetadata ? rest.slice(index) : rest;
-    return ["# Source Conversation", "", ...sourceLines, "", ...contentLines].join("\n").trimEnd() + "\n";
+    if (/^(saved_at|platform|platform_url|conversation_title|conversation_url):/.test(line)) {
+      index += 1;
+      consumedMetadata = true;
+      continue;
+    }
+    if (line === "bookmark:") {
+      index += 1;
+      consumedMetadata = true;
+      while (index < rest.length && rest[index].trim() && rest[index].trim() !== "---") index += 1;
+      continue;
+    }
+    if (!line && consumedMetadata) {
+      index += 1;
+      continue;
+    }
+    break;
   }
-  return ["# Source Conversation", "", ...sourceLines, "", normalized].join("\n").trimEnd() + "\n";
+
+  while (index < rest.length && !rest[index].trim()) index += 1;
+  const body = (consumedMetadata ? rest.slice(index).join("\n") : rest.join("\n")).trimEnd();
+  const bodyLines = body.split("\n");
+  if (/^\[001]\s+user\s*$/i.test(bodyLines[0]?.trim() ?? "") && !bodyLines.some((line) => /^\[002]\s+/i.test(line.trim()))) {
+    return bodyLines.slice(1).join("\n").trimStart().trimEnd();
+  }
+  return body;
+}
+
+function mergeSourceMetadataIntoMarkdown(markdownText: string, sourceInfo: SourceInfo) {
+  const body = getSourceMarkdownBody(markdownText);
+  assertNonEmptyContent(body);
+  return ["# Source Conversation", "", ...sourceMetadataLines(sourceInfo), "", "---", "", body].join("\n").trimEnd() + "\n";
 }
 
 function getSourceOnlyDownloadFilename(date = new Date()) {
@@ -797,13 +818,12 @@ export default function HandoffMemoTool() {
       "",
       ...sourceMetadataLines(params.sourceInfo),
       "",
+      "---",
+      "",
     ];
 
-    params.messages.forEach((message, index) => {
-      lines.push(`[${String(index + 1).padStart(3, "0")}] ${message.role}`);
-      lines.push(message.text);
-      lines.push("");
-    });
+    const body = params.messages.map((message) => message.text).join("\n\n").trimEnd();
+    if (body) lines.push(body, "");
 
     return lines.join("\n");
   }
