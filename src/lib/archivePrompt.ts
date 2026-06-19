@@ -85,12 +85,53 @@ search_terms:
   - AI Conversation Archive
   - 知識メモ保存
 
+title と conversation_title の違い:
+- title は今回作る知識メモの名前。
+- source.conversation_title は元チャット名。
+- 両者は別物として扱う。
+- 例:
+  - title: "AI Conversation Archive UI改善とアーカイブ運用整理"
+  - source.conversation_title: "AI会話アーカイブ設計"
+
+filename生成ルール:
+- filename は必須。
+- source.conversation_title を最優先で使用する。
+- source.conversation_title が空の場合は、会話内容から検索しやすい会話タイトルを推定して使用する。
+- title はアーカイブ名であり、filename生成には使用しない。
+- 日本語タイトルをそのまま使用する。
+- 英数字変換は行わない。
+- ファイル名に使用できない文字だけ除去または置換する。
+- 日付は source.saved_at を優先して使用する。
+- 形式は以下とする。
+
+filename:
+  YYYY-MM-DD_会話タイトル.yaml
+
+例:
+
+source:
+  conversation_title: "AI会話アーカイブ設計"
+
+↓
+
+filename:
+  "2026-06-19_AI会話アーカイブ設計.yaml"
+
+source:
+  conversation_title: "ホロスコープ3D表示改善"
+
+↓
+
+filename:
+  "2026-06-19_ホロスコープ3D表示改善.yaml"
+
+- filename は後から人間が検索することを前提とし、汎用名(ai-handoff-memo.yaml 等)は使用しない。
+- filename には、その会話の主題が分かる語を必ず含める。
+
 YAML知識メモの出力形式:
 - YAMLだけをコードブロックで出力する。
 - filename を必ず入れる。
-- filename は source.conversation_title を優先し、YYYY-MM-DD_会話タイトル.yaml の形にする。
-- 英数字変換は行わず、日本語の会話タイトルをそのまま使う。
-- ファイル名に使えない記号だけ避ける。
+- filename は filename生成ルールに従う。
 - source、bookmark、search_terms は上部に置く。
 - 会話全文をそのまま保存せず、決定事項、次アクション、未解決事項、重要文脈、再利用用途を抽出する。
 - 最低限、source、bookmark、search_terms、summary、decisions、next_actions は必ず出力する。
