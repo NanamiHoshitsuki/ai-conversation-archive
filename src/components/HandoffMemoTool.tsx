@@ -203,7 +203,7 @@ function sourceMetadataLines(sourceInfo: SourceInfo) {
   if (source.platform) lines.push(`platform: ${source.platform}`);
   if (source.conversation_title) lines.push(`conversation_title: ${source.conversation_title}`);
   if (source.conversation_url) lines.push(`conversation_url: ${source.conversation_url}`);
-  if (sourceInfo.bookmark.trim()) lines.push(`bookmark: ${sourceInfo.bookmark.trim()}`);
+  if (sourceInfo.bookmark.trim()) lines.push("", "bookmark:", sourceInfo.bookmark.trim());
   return lines;
 }
 
@@ -370,7 +370,9 @@ export default function HandoffMemoTool() {
     ? getSourceLogFilenameFromYamlFilename(conversationTitleFilename)
     : sourceLogFilename || getSourceOnlyDownloadFilename();
   const activeFilename =
-    activeInputTab === "log-save" ? currentSourceLogFilename : currentYamlFilename || memo?.filename || "未生成";
+    activeInputTab === "log-save"
+      ? currentSourceLogFilename
+      : currentYamlFilename || conversationTitleFilename || memo?.filename || "未生成";
 
   function selectInputTab(tab: InputTab) {
     setActiveInputTab(tab);
@@ -887,6 +889,80 @@ export default function HandoffMemoTool() {
           )}
 
           {activeInputTab !== "prompt" && (
+            <div className="rounded-md border border-stone-200 bg-stone-50 p-3">
+              <p className="text-sm font-bold text-stone-950">保存情報</p>
+              <p className="mt-1 text-xs leading-5 text-stone-500">
+                元チャットを後から探しやすくするための情報です。conversation_title はファイル名にも利用されます。
+              </p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="source-platform" className="text-xs font-bold text-stone-600">
+                    platform
+                  </label>
+                  <input
+                    id="source-platform"
+                    value={sourceInfo.platform}
+                    onChange={(event) => updateSourceInfo("platform", event.target.value)}
+                    className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+                    placeholder="ChatGPT"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="source-saved-at" className="text-xs font-bold text-stone-600">
+                    saved_at
+                  </label>
+                  <input
+                    id="source-saved-at"
+                    value={sourceInfo.savedAt}
+                    onChange={(event) => updateSourceInfo("savedAt", event.target.value)}
+                    className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+                    placeholder="2026-06-19 08:57"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="source-title" className="text-xs font-bold text-stone-600">
+                    conversation_title
+                  </label>
+                  <input
+                    id="source-title"
+                    value={sourceInfo.conversationTitle}
+                    onChange={(event) => updateSourceInfo("conversationTitle", event.target.value)}
+                    className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+                    placeholder="AI会話アーカイブ設計"
+                  />
+                  <p className="mt-1 text-xs leading-5 text-stone-500">ファイル名にも利用されます。</p>
+                </div>
+                <div>
+                  <label htmlFor="source-url" className="text-xs font-bold text-stone-600">
+                    conversation_url
+                  </label>
+                  <input
+                    id="source-url"
+                    value={sourceInfo.conversationUrl}
+                    onChange={(event) => updateSourceInfo("conversationUrl", event.target.value)}
+                    className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+                    placeholder="https://chatgpt.com/c/..."
+                  />
+                  <p className="mt-1 text-xs leading-5 text-stone-500">元チャットURL（任意）</p>
+                </div>
+              </div>
+              <div className="mt-3">
+                <label htmlFor="source-note" className="text-xs font-bold text-stone-600">
+                  bookmark
+                </label>
+                <textarea
+                  id="source-note"
+                  value={sourceInfo.bookmark}
+                  onChange={(event) => updateSourceInfo("bookmark", event.target.value)}
+                  className="mt-1 min-h-20 w-full resize-y rounded-md border border-stone-300 bg-white p-3 text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+                  placeholder="どのチャットだったか思い出すためのしおりメモ"
+                />
+                <p className="mt-1 text-xs leading-5 text-stone-500">後で何を思い出したい会話かを記録します。</p>
+              </div>
+            </div>
+          )}
+
+          {activeInputTab !== "prompt" && (
             <div className="flex flex-wrap items-start gap-3">
               <button
                 type="button"
@@ -980,76 +1056,6 @@ export default function HandoffMemoTool() {
             </div>
           )}
 
-          {activeInputTab !== "prompt" && (
-            <div className="rounded-md border border-stone-200 bg-stone-50 p-3">
-              <p className="text-sm font-bold text-stone-950">保存情報入力欄</p>
-              <p className="mt-1 text-xs leading-5 text-stone-500">
-                元のチャットを後から見つけやすくするための任意情報です。conversation_title は日本語のままファイル名に使います。
-              </p>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="source-platform" className="text-xs font-bold text-stone-600">
-                    platform
-                  </label>
-                  <input
-                    id="source-platform"
-                    value={sourceInfo.platform}
-                    onChange={(event) => updateSourceInfo("platform", event.target.value)}
-                    className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                    placeholder="ChatGPT"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="source-saved-at" className="text-xs font-bold text-stone-600">
-                    saved_at
-                  </label>
-                  <input
-                    id="source-saved-at"
-                    value={sourceInfo.savedAt}
-                    onChange={(event) => updateSourceInfo("savedAt", event.target.value)}
-                    className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                    placeholder="2026-06-18 22:00"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="source-title" className="text-xs font-bold text-stone-600">
-                    conversation_title
-                  </label>
-                  <input
-                    id="source-title"
-                    value={sourceInfo.conversationTitle}
-                    onChange={(event) => updateSourceInfo("conversationTitle", event.target.value)}
-                    className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                    placeholder="AI会話アーカイブ設計"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="source-url" className="text-xs font-bold text-stone-600">
-                    conversation_url
-                  </label>
-                  <input
-                    id="source-url"
-                    value={sourceInfo.conversationUrl}
-                    onChange={(event) => updateSourceInfo("conversationUrl", event.target.value)}
-                    className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                    placeholder="https://chatgpt.com/c/..."
-                  />
-                </div>
-              </div>
-              <div className="mt-3">
-                <label htmlFor="source-note" className="text-xs font-bold text-stone-600">
-                  bookmark
-                </label>
-                <textarea
-                  id="source-note"
-                  value={sourceInfo.bookmark}
-                  onChange={(event) => updateSourceInfo("bookmark", event.target.value)}
-                  className="mt-1 min-h-20 w-full resize-y rounded-md border border-stone-300 bg-white p-3 text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                  placeholder="どのチャットだったか思い出すためのしおりメモ"
-                />
-              </div>
-            </div>
-          )}
         </section>
 
         <section className="space-y-4">
