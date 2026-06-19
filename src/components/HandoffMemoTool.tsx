@@ -126,6 +126,8 @@ const UI_TEXT = {
     alsoSaveLog: "会話ログも保存する",
     downloadLog: "会話ログをダウンロード",
     downloadBoth: "両方ダウンロード",
+    savedBothToFolder: (monthFolder: string, yamlFilename: string, sourceFilename: string) =>
+      `${monthFolder}/${yamlFilename} と ${monthFolder}/${sourceFilename} に保存しました。`,
     destination: "保存先",
     selectedFolder: "選択済みフォルダ",
     notSelected: "未選択",
@@ -222,6 +224,8 @@ AIとの会話を後で見返せる知識資産として残したい。
     alsoSaveLog: "Also save conversation log",
     downloadLog: "Download Conversation Log",
     downloadBoth: "Download Both",
+    savedBothToFolder: (monthFolder: string, yamlFilename: string, sourceFilename: string) =>
+      `Saved to ${monthFolder}/${yamlFilename} and ${monthFolder}/${sourceFilename}.`,
     destination: "Save Destination",
     selectedFolder: "Selected folder",
     notSelected: "Not selected",
@@ -926,7 +930,21 @@ export default function HandoffMemoTool() {
           return;
         }
         setYamlText(nextYaml);
-        setStatus(t.savedTo(`${monthFolder}/${getYamlDownloadFilename(nextYaml)}`));
+        const yamlFilename = getYamlDownloadFilename(nextYaml);
+        const nextSourceLog = sourceLogText ? mergeSourceMetadataIntoMarkdown(sourceLogText, sourceInfo).trim() : "";
+        if (nextSourceLog) {
+          const sourceFilename = sourceLogFilename || getSourceLogDownloadFilename(nextYaml);
+          const isSourceEmptyFile = await writeTextToDirectory(directoryHandle, sourceFilename, nextSourceLog, monthFolder);
+          if (isSourceEmptyFile) {
+            setStatus(t.zeroByteWarning);
+            return;
+          }
+          setSourceLogText(nextSourceLog);
+          setSourceLogFilename(sourceFilename);
+          setStatus(t.savedBothToFolder(monthFolder, yamlFilename, sourceFilename));
+          return;
+        }
+        setStatus(t.savedTo(`${monthFolder}/${yamlFilename}`));
         return;
       } catch {
         setStatus(t.folderSaveFailure);
