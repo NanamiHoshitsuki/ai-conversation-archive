@@ -9,11 +9,13 @@ import {
   SIMPLE_SHIORI_ARCHIVE_PROMPT_EN,
 } from "@/lib/archivePrompt";
 import {
+  buildArchiveFilename,
   buildConversationTitleFilename,
   generateHandoffMemo,
   getMemoMonthFolder,
   getSourceLogDownloadFilename,
   getSourceLogFilenameFromYamlFilename,
+  stripArchiveFilenameExtension,
   getYamlDownloadFilename,
   memoToYaml,
   type HandoffMemo,
@@ -56,6 +58,12 @@ type SourceInfo = {
   conversationUrl: string;
   savedAt: string;
   bookmark: string;
+};
+
+type PreparedTextFile = {
+  filename: string;
+  content: string;
+  mimeType: string;
 };
 
 const DIRECTORY_DB_NAME = "ai-conversation-archive";
@@ -132,7 +140,7 @@ const UI_TEXT = {
     selectedFolder: "選択済みフォルダ",
     notSelected: "未選択",
     selectedYamlPath: "選択済みフォルダ / YYYY-MM / filename.yaml",
-    selectedMarkdownPath: "選択済みフォルダ / YYYY-MM / filename.md",
+    selectedMarkdownPath: "選択済みフォルダ / YYYY-MM / filename.source.md",
     downloadFallback: "未選択の場合はブラウザのダウンロードフォルダへ保存",
     folderUnsupportedHelp: "フォルダ指定に未対応のブラウザでは、ダウンロード保存を使います。",
     syncFolderHelp:
@@ -287,8 +295,15 @@ The goal is not to save the raw conversation, but to preserve reusable outcomes.
   },
 } as const;
 
-function downloadTextFile(filename: string, text: string, type = "text/plain;charset=utf-8") {
-  const blob = new Blob([text], { type });
+function assertNonEmptyContent(content: string) {
+  if (!content.trim()) {
+    throw new Error("Cannot save empty archive content.");
+  }
+}
+
+function downloadTextFile(filename: string, content: string, mimeType = "text/plain;charset=utf-8") {
+  assertNonEmptyContent(content);
+  const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -301,6 +316,50 @@ function downloadTextFile(filename: string, text: string, type = "text/plain;cha
 
 function downloadYaml(filename: string, yamlText: string) {
   downloadTextFile(filename, yamlText, "text/yaml;charset=utf-8");
+}
+
+function buildBaseFilename(yamlContent: string, sourceInfo: SourceInfo, fallbackDate = new Date()) {
+  const conversationTitle = sourceInfo.conversationTitle.trim();
+  if (conversationTitle) {
+    return stripArchiveFilenameExtension(buildConversationTitleFilename(conversationTitle, getFilenameDate(sourceInfo)));
+  }
+  return stripArchiveFilenameExtension(getYamlDownloadFilename(yamlContent, fallbackDate));
+}
+
+function buildYamlContent(sourceYamlText: string, sourceInfo: SourceInfo) {
+  const content = mergeSourceMetadataIntoYaml(sourceYamlText, sourceInfo);
+  assertNonEmptyContent(content);
+  return content;
+}
+
+function buildMarkdownContent(sourceMarkdownText: string, sourceInfo: SourceInfo) {
+  const content = mergeSourceMetadataIntoMarkdown(sourceMarkdownText, sourceInfo);
+  assertNonEmptyContent(content);
+  return content;
+}
+
+function buildYamlFile(sourceYamlText: string, sourceInfo: SourceInfo): PreparedTextFile {
+  const content = buildYamlContent(sourceYamlText, sourceInfo);
+  const baseFilename = buildBaseFilename(content, sourceInfo);
+  return {
+    filename: buildArchiveFilename(baseFilename, ".yaml"),
+    content,
+    mimeType: "text/yaml;charset=utf-8",
+  };
+}
+
+function buildMarkdownFile(sourceMarkdownText: string, sourceInfo: SourceInfo, yamlContent = ""): PreparedTextFile {
+  const content = buildMarkdownContent(sourceMarkdownText, sourceInfo);
+  const baseFilename = sourceInfo.conversationTitle.trim()
+    ? stripArchiveFilenameExtension(buildConversationTitleFilename(sourceInfo.conversationTitle, getFilenameDate(sourceInfo)))
+    : yamlContent
+      ? buildBaseFilename(yamlContent, sourceInfo)
+      : stripArchiveFilenameExtension(getSourceOnlyDownloadFilename());
+  return {
+    filename: buildArchiveFilename(baseFilename, ".source.md"),
+    content,
+    mimeType: "text/markdown;charset=utf-8",
+  };
 }
 
 function openDirectoryDatabase() {
@@ -538,8 +597,31 @@ function mergeSourceMetadataIntoMarkdown(markdownText: string, sourceInfo: Sourc
   const normalized = markdownText.trimStart();
   if (normalized.startsWith("# Source Conversation")) {
     const [, ...rest] = normalized.split("\n");
-    const contentStartIndex = rest.findIndex((line) => /^\[\d{3}\]\s/.test(line.trim()) || line.startsWith("# "));
-    const contentLines = contentStartIndex >= 0 ? rest.slice(contentStartIndex) : rest;
+    let index = 0;
+    let consumedMetadata = false;
+
+    while (index < rest.length && !rest[index].trim()) index += 1;
+    while (index < rest.length) {
+      const line = rest[index].trim();
+      if (/^(saved_at|platform|conversation_title|conversation_url):/.test(line)) {
+        consumedMetadata = true;
+        index += 1;
+        continue;
+      }
+      if (line === "bookmark:") {
+        consumedMetadata = true;
+        index += 1;
+        while (index < rest.length && rest[index].trim()) index += 1;
+        continue;
+      }
+      if (!line && consumedMetadata) {
+        index += 1;
+        break;
+      }
+      break;
+    }
+
+    const contentLines = consumedMetadata ? rest.slice(index) : rest;
     return ["# Source Conversation", "", ...sourceLines, "", ...contentLines].join("\n").trimEnd() + "\n";
   }
   return ["# Source Conversation", "", ...sourceLines, "", normalized].join("\n").trimEnd() + "\n";
@@ -549,7 +631,7 @@ function getSourceOnlyDownloadFilename(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}_source-conversation.md`;
+  return `${year}-${month}-${day}_source-conversation.source.md`;
 }
 
 async function warnIfWrittenFileIsEmpty(fileHandle: { getFile?: () => Promise<File> }) {
@@ -562,29 +644,17 @@ async function warnIfWrittenFileIsEmpty(fileHandle: { getFile?: () => Promise<Fi
   }
 }
 
-async function writeYamlToDirectory(directory: WritableDirectoryHandle, memo: HandoffMemo, yamlText: string) {
-  const monthDirectory = await directory.getDirectoryHandle(getMemoMonthFolder(memo), { create: true });
-  const fileHandle = await monthDirectory.getFileHandle(getYamlDownloadFilename(yamlText), { create: true });
-  const writable = await fileHandle.createWritable();
-  await writable.write(yamlText);
-  await writable.close();
-  return warnIfWrittenFileIsEmpty(fileHandle);
-}
-
-async function writeYamlTextToDirectory(directory: WritableDirectoryHandle, yamlText: string, monthFolder: string) {
-  const monthDirectory = await directory.getDirectoryHandle(monthFolder, { create: true });
-  const fileHandle = await monthDirectory.getFileHandle(getYamlDownloadFilename(yamlText), { create: true });
-  const writable = await fileHandle.createWritable();
-  await writable.write(yamlText);
-  await writable.close();
-  return warnIfWrittenFileIsEmpty(fileHandle);
-}
-
-async function writeTextToDirectory(directory: WritableDirectoryHandle, filename: string, text: string, monthFolder: string) {
+async function saveTextFileToDirectory(
+  directory: WritableDirectoryHandle,
+  filename: string,
+  content: string,
+  monthFolder: string,
+) {
+  assertNonEmptyContent(content);
   const monthDirectory = await directory.getDirectoryHandle(monthFolder, { create: true });
   const fileHandle = await monthDirectory.getFileHandle(filename, { create: true });
   const writable = await fileHandle.createWritable();
-  await writable.write(text);
+  await writable.write(content);
   await writable.close();
   return warnIfWrittenFileIsEmpty(fileHandle);
 }
@@ -849,26 +919,39 @@ export default function HandoffMemoTool() {
   }
 
   async function saveSourceLogFile() {
-    const nextSourceLog = mergeSourceMetadataIntoMarkdown(sourceLogText, sourceInfo).trim();
-    if (!sourceLogText.trim() || !nextSourceLog) {
+    if (!sourceLogText.trim()) {
       setStatus(t.emptyContent);
       return;
     }
 
-    const filename = currentSourceLogFilename;
-    const monthFolder = formatMarkdownTimestamp().slice(0, 7);
+    let markdownFile: PreparedTextFile;
+    try {
+      markdownFile = buildMarkdownFile(sourceLogText, sourceInfo);
+    } catch {
+      setStatus(t.emptyContent);
+      return;
+    }
+
+    const monthFolder = formatSourceTimestamp(getFilenameDate(sourceInfo)).slice(0, 7);
     if (directoryHandle) {
       try {
         if (!(await ensureDirectoryPermission(directoryHandle))) {
           setStatus(t.folderPermissionDenied);
           return;
         }
-        const isEmptyFile = await writeTextToDirectory(directoryHandle, filename, nextSourceLog, monthFolder);
+        const isEmptyFile = await saveTextFileToDirectory(
+          directoryHandle,
+          markdownFile.filename,
+          markdownFile.content,
+          monthFolder,
+        );
         if (isEmptyFile) {
           setStatus(t.zeroByteWarning);
           return;
         }
-        setStatus(t.savedTo(`${monthFolder}/${filename}`));
+        setSourceLogText(markdownFile.content);
+        setSourceLogFilename(markdownFile.filename);
+        setStatus(t.savedTo(`${monthFolder}/${markdownFile.filename}`));
         return;
       } catch {
         setStatus(t.folderSaveFailure);
@@ -876,7 +959,14 @@ export default function HandoffMemoTool() {
       }
     }
 
-    downloadTextFile(filename, nextSourceLog, "text/markdown;charset=utf-8");
+    try {
+      downloadTextFile(markdownFile.filename, markdownFile.content, markdownFile.mimeType);
+    } catch {
+      setStatus(t.emptyContent);
+      return;
+    }
+    setSourceLogText(markdownFile.content);
+    setSourceLogFilename(markdownFile.filename);
     setStatus(t.logDownloaded);
   }
 
@@ -892,7 +982,7 @@ export default function HandoffMemoTool() {
     }
 
     let nextMemo = activeInputTab === "memo-save" ? null : memo;
-    let nextYaml = mergeSourceMetadataIntoYaml(yamlText, sourceInfo);
+    let nextYaml = yamlText;
     let nextSourceLogText = sourceLogText;
     const isPastedYaml = activeInputTab === "memo-save";
 
@@ -915,6 +1005,18 @@ export default function HandoffMemoTool() {
       setYamlText(nextYaml);
     }
 
+    let yamlFile: PreparedTextFile;
+    let markdownFile: PreparedTextFile | null = null;
+    try {
+      yamlFile = buildYamlFile(nextYaml, sourceInfo);
+      if (nextSourceLogText.trim()) {
+        markdownFile = buildMarkdownFile(nextSourceLogText, sourceInfo, yamlFile.content);
+      }
+    } catch {
+      setStatus(t.emptyContent);
+      return;
+    }
+
     if (directoryHandle) {
       try {
         if (!(await ensureDirectoryPermission(directoryHandle))) {
@@ -922,33 +1024,35 @@ export default function HandoffMemoTool() {
           return;
         }
         const monthFolder = nextMemo ? getMemoMonthFolder(nextMemo) : formatMarkdownTimestamp().slice(0, 7);
-        let isEmptyFile = false;
-        if (nextMemo) {
-          isEmptyFile = await writeYamlToDirectory(directoryHandle, nextMemo, nextYaml);
-        } else {
-          isEmptyFile = await writeYamlTextToDirectory(directoryHandle, nextYaml, monthFolder);
-        }
+        const isEmptyFile = await saveTextFileToDirectory(
+          directoryHandle,
+          yamlFile.filename,
+          yamlFile.content,
+          monthFolder,
+        );
         if (isEmptyFile) {
-          setYamlText(nextYaml);
+          setYamlText(yamlFile.content);
           setStatus(t.zeroByteWarning);
           return;
         }
-        setYamlText(nextYaml);
-        const yamlFilename = getYamlDownloadFilename(nextYaml);
-        const nextSourceLog = nextSourceLogText ? mergeSourceMetadataIntoMarkdown(nextSourceLogText, sourceInfo).trim() : "";
-        if (nextSourceLog) {
-          const sourceFilename = sourceLogFilename || getSourceLogDownloadFilename(nextYaml);
-          const isSourceEmptyFile = await writeTextToDirectory(directoryHandle, sourceFilename, nextSourceLog, monthFolder);
+        setYamlText(yamlFile.content);
+        if (markdownFile) {
+          const isSourceEmptyFile = await saveTextFileToDirectory(
+            directoryHandle,
+            markdownFile.filename,
+            markdownFile.content,
+            monthFolder,
+          );
           if (isSourceEmptyFile) {
             setStatus(t.zeroByteWarning);
             return;
           }
-          setSourceLogText(nextSourceLog);
-          setSourceLogFilename(sourceFilename);
-          setStatus(t.savedBothToFolder(monthFolder, yamlFilename, sourceFilename));
+          setSourceLogText(markdownFile.content);
+          setSourceLogFilename(markdownFile.filename);
+          setStatus(t.savedBothToFolder(monthFolder, yamlFile.filename, markdownFile.filename));
           return;
         }
-        setStatus(t.savedTo(`${monthFolder}/${yamlFilename}`));
+        setStatus(t.savedTo(`${monthFolder}/${yamlFile.filename}`));
         return;
       } catch {
         setStatus(t.folderSaveFailure);
@@ -956,16 +1060,22 @@ export default function HandoffMemoTool() {
       }
     }
 
-    setYamlText(nextYaml);
-    downloadYaml(getYamlDownloadFilename(nextYaml), nextYaml);
-    if (nextSourceLogText) {
-      const nextSourceLog = mergeSourceMetadataIntoMarkdown(nextSourceLogText, sourceInfo);
-      setSourceLogText(nextSourceLog);
-      downloadTextFile(
-        sourceLogFilename || getSourceLogDownloadFilename(nextYaml),
-        nextSourceLog,
-        "text/markdown;charset=utf-8",
-      );
+    setYamlText(yamlFile.content);
+    try {
+      downloadTextFile(yamlFile.filename, yamlFile.content, yamlFile.mimeType);
+    } catch {
+      setStatus(t.emptyContent);
+      return;
+    }
+    if (markdownFile) {
+      setSourceLogText(markdownFile.content);
+      setSourceLogFilename(markdownFile.filename);
+      try {
+        downloadTextFile(markdownFile.filename, markdownFile.content, markdownFile.mimeType);
+      } catch {
+        setStatus(t.emptyContent);
+        return;
+      }
       setStatus(t.bothDownloaded);
       return;
     }
@@ -982,9 +1092,15 @@ export default function HandoffMemoTool() {
       setStatus(t.createOrPasteFirst);
       return;
     }
-    const nextYaml = mergeSourceMetadataIntoYaml(yamlText, sourceInfo);
-    setYamlText(nextYaml);
-    downloadYaml(getYamlDownloadFilename(nextYaml), nextYaml);
+    let yamlFile: PreparedTextFile;
+    try {
+      yamlFile = buildYamlFile(yamlText, sourceInfo);
+      downloadTextFile(yamlFile.filename, yamlFile.content, yamlFile.mimeType);
+    } catch {
+      setStatus(t.emptyContent);
+      return;
+    }
+    setYamlText(yamlFile.content);
     setStatus(t.memoDownloaded);
   }
 
@@ -993,9 +1109,17 @@ export default function HandoffMemoTool() {
       setStatus(t.noLog);
       return;
     }
-    const nextSourceLog = mergeSourceMetadataIntoMarkdown(sourceLogText, sourceInfo);
-    setSourceLogText(nextSourceLog);
-    downloadTextFile(currentSourceLogFilename, nextSourceLog, "text/markdown;charset=utf-8");
+    let markdownFile: PreparedTextFile;
+    try {
+      const yamlContent = yamlText.trim() ? buildYamlContent(yamlText, sourceInfo) : "";
+      markdownFile = buildMarkdownFile(sourceLogText, sourceInfo, yamlContent);
+      downloadTextFile(markdownFile.filename, markdownFile.content, markdownFile.mimeType);
+    } catch {
+      setStatus(t.emptyContent);
+      return;
+    }
+    setSourceLogText(markdownFile.content);
+    setSourceLogFilename(markdownFile.filename);
     setStatus(t.logDownloaded);
   }
 
@@ -1004,17 +1128,26 @@ export default function HandoffMemoTool() {
       setStatus(t.createOrPasteFirst);
       return;
     }
-    const nextYaml = mergeSourceMetadataIntoYaml(yamlText, sourceInfo);
-    setYamlText(nextYaml);
-    downloadYaml(getYamlDownloadFilename(nextYaml), nextYaml);
-    if (sourceLogText) {
-      const nextSourceLog = mergeSourceMetadataIntoMarkdown(sourceLogText, sourceInfo);
-      setSourceLogText(nextSourceLog);
-      downloadTextFile(
-        sourceLogFilename || getSourceLogDownloadFilename(nextYaml),
-        nextSourceLog,
-        "text/markdown;charset=utf-8",
-      );
+    let yamlFile: PreparedTextFile;
+    try {
+      yamlFile = buildYamlFile(yamlText, sourceInfo);
+      downloadTextFile(yamlFile.filename, yamlFile.content, yamlFile.mimeType);
+    } catch {
+      setStatus(t.emptyContent);
+      return;
+    }
+    setYamlText(yamlFile.content);
+    if (sourceLogText.trim()) {
+      let markdownFile: PreparedTextFile;
+      try {
+        markdownFile = buildMarkdownFile(sourceLogText, sourceInfo, yamlFile.content);
+        downloadTextFile(markdownFile.filename, markdownFile.content, markdownFile.mimeType);
+      } catch {
+        setStatus(t.emptyContent);
+        return;
+      }
+      setSourceLogText(markdownFile.content);
+      setSourceLogFilename(markdownFile.filename);
       setStatus(t.bothDownloaded);
       return;
     }

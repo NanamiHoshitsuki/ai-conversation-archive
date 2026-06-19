@@ -285,13 +285,27 @@ export function buildConversationTitleFilename(conversationTitle: string, date =
   return `${dateString(date)}_${safeTitle}.yaml`;
 }
 
+export function stripArchiveFilenameExtension(filename: string) {
+  return filename
+    .trim()
+    .replace(/\.source\.md$/i, "")
+    .replace(/\.ya?ml$/i, "")
+    .replace(/\.md$/i, "");
+}
+
+export function buildArchiveFilename(baseFilename: string, extension: ".yaml" | ".source.md", fallbackDate = new Date()) {
+  const base = stripArchiveFilenameExtension(baseFilename);
+  const fallbackBase = stripArchiveFilenameExtension(getFallbackMemoFilename(fallbackDate));
+  return `${base || fallbackBase}${extension}`;
+}
+
 export function getYamlDownloadFilename(yamlText: string, fallbackDate = new Date()) {
   try {
     const parsed = yaml.load(yamlText);
     if (parsed && typeof parsed === "object" && "filename" in parsed) {
       const filename = (parsed as { filename?: unknown }).filename;
       if (typeof filename === "string" && filename.trim()) {
-        return filename.trim().endsWith(".yaml") ? filename.trim() : `${filename.trim()}.yaml`;
+        return buildArchiveFilename(filename, ".yaml", fallbackDate);
       }
     }
   } catch {
@@ -302,9 +316,7 @@ export function getYamlDownloadFilename(yamlText: string, fallbackDate = new Dat
 }
 
 export function getSourceLogFilenameFromYamlFilename(yamlFilename: string) {
-  const trimmed = yamlFilename.trim();
-  if (!trimmed) return getFallbackMemoFilename().replace(/\.yaml$/, ".source.md");
-  return trimmed.replace(/\.ya?ml$/i, ".source.md");
+  return buildArchiveFilename(yamlFilename, ".source.md");
 }
 
 export function getSourceLogDownloadFilename(yamlText: string, fallbackDate = new Date()) {
