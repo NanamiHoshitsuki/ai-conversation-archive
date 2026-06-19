@@ -428,6 +428,15 @@ export default function HandoffMemoTool() {
     }
   }
 
+  function syncSourceInfoFromYaml(nextYamlText: string) {
+    const extractedSourceInfo = extractSourceInfoFromYaml(nextYamlText);
+    if (Object.keys(extractedSourceInfo).length === 0) return;
+    setSourceInfo((current) => ({
+      ...current,
+      ...extractedSourceInfo,
+    }));
+  }
+
   useEffect(() => {
     let isMounted = true;
 
@@ -588,7 +597,7 @@ export default function HandoffMemoTool() {
       setSourceInfo(nextSourceInfo);
       setYamlText(mergeSourceMetadataIntoYaml(yamlText, nextSourceInfo));
       setActiveOutputTab("yaml");
-      setStatus("知識メモを読み込みました。");
+      setStatus("知識メモを更新しました。");
       return;
     }
 
@@ -599,7 +608,7 @@ export default function HandoffMemoTool() {
       }
       setSourceLogFilename((filename) => filename || getSourceOnlyDownloadFilename());
       setActiveOutputTab("source");
-      setStatus("会話ログを読み込みました。");
+      setStatus("会話ログを更新しました。");
       return;
     }
 
@@ -820,7 +829,9 @@ export default function HandoffMemoTool() {
                   id="memo-save-input"
                   value={yamlText}
                   onChange={(event) => {
-                    setYamlText(event.target.value);
+                    const nextYamlText = event.target.value;
+                    setYamlText(nextYamlText);
+                    syncSourceInfoFromYaml(nextYamlText);
                     setMemo(null);
                     setActiveOutputTab("yaml");
                   }}
@@ -834,7 +845,7 @@ export default function HandoffMemoTool() {
                     onClick={loadCurrentInput}
                     className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
                   >
-                    読み込み
+                    更新
                   </button>
                 </div>
               </div>
@@ -866,7 +877,7 @@ export default function HandoffMemoTool() {
                     onClick={loadCurrentInput}
                     className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
                   >
-                    読み込み
+                    更新
                   </button>
                 </div>
               </div>
