@@ -29,7 +29,7 @@ type WritableDirectoryHandle = {
   getFileHandle(name: string, options?: { create?: boolean }): Promise<{
     getFile?: () => Promise<File>;
     createWritable(): Promise<{
-      write(data: string): Promise<void>;
+      write(data: Blob): Promise<void>;
       close(): Promise<void>;
     }>;
   }>;
@@ -143,6 +143,7 @@ const UI_TEXT = {
     selectedMarkdownPath: "選択済みフォルダ / YYYY-MM / filename.source.md",
     downloadFallback: "未選択の場合はブラウザのダウンロードフォルダへ保存",
     folderUnsupportedHelp: "フォルダ指定に未対応のブラウザでは、ダウンロード保存を使います。",
+    folderDownloadFallback: "フォルダ保存に失敗したため、通常ダウンロードに切り替えました。",
     syncFolderHelp:
       "Google Driveなどの同期フォルダへ保存する場合、フォルダ保存が失敗することがあります。その場合は「ダウンロード」を使い、ブラウザの保存先をGoogle Drive同期フォルダに設定してください。",
     outputPreview: "出力プレビュー",
@@ -238,9 +239,10 @@ AIとの会話を後で見返せる知識資産として残したい。
     selectedFolder: "Selected folder",
     notSelected: "Not selected",
     selectedYamlPath: "Selected folder / YYYY-MM / filename.yaml",
-    selectedMarkdownPath: "Selected folder / YYYY-MM / filename.md",
+    selectedMarkdownPath: "Selected folder / YYYY-MM / filename.source.md",
     downloadFallback: "If no folder is selected, files are saved to the browser download folder",
     folderUnsupportedHelp: "If your browser does not support folder selection, use download instead.",
+    folderDownloadFallback: "Folder save failed, so the file was downloaded instead.",
     syncFolderHelp:
       "Saving directly to synced folders such as Google Drive can fail. If that happens, use Download and set your browser download location to the synced folder.",
     outputPreview: "Output Preview",
@@ -296,7 +298,7 @@ The goal is not to save the raw conversation, but to preserve reusable outcomes.
 } as const;
 
 function assertNonEmptyContent(content: string) {
-  if (!content.trim()) {
+  if (content.length === 0) {
     throw new Error("Cannot save empty archive content.");
   }
 }
@@ -360,6 +362,12 @@ function buildMarkdownFile(sourceMarkdownText: string, sourceInfo: SourceInfo, y
     content,
     mimeType: "text/markdown;charset=utf-8",
   };
+}
+
+function downloadPreparedFiles(files: PreparedTextFile[]) {
+  files.forEach((file) => {
+    downloadTextFile(file.filename, file.content, file.mimeType);
+  });
 }
 
 function openDirectoryDatabase() {
@@ -670,12 +678,13 @@ async function saveTextFileToDirectory(
   filename: string,
   content: string,
   monthFolder: string,
+  mimeType: string,
 ) {
   assertNonEmptyContent(content);
   const monthDirectory = await directory.getDirectoryHandle(monthFolder, { create: true });
   const fileHandle = await monthDirectory.getFileHandle(filename, { create: true });
   const writable = await fileHandle.createWritable();
-  await writable.write(content);
+  await writable.write(new Blob([content], { type: mimeType }));
   await writable.close();
   return warnIfWrittenFileIsEmpty(fileHandle);
 }
@@ -692,6 +701,10 @@ export default function HandoffMemoTool() {
   const [yamlText, setYamlText] = useState("");
   const [directoryHandle, setDirectoryHandle] = useState<WritableDirectoryHandle | null>(null);
   const [directoryName, setDirectoryName] = useState("");
+  const [supportsDirectoryPicker] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return typeof window.showDirectoryPicker === "function";
+  });
   const [status, setStatus] = useState("");
   const [autoDownload, setAutoDownload] = useState(false);
   const [saveSourceLog, setSaveSourceLog] = useState(true);
@@ -765,6 +778,7 @@ export default function HandoffMemoTool() {
     let isMounted = true;
 
     async function restoreDirectory() {
+      if (supportsDirectoryPicker !== true) return;
       if (!("indexedDB" in window)) return;
 
       try {
@@ -791,7 +805,7 @@ export default function HandoffMemoTool() {
     return () => {
       isMounted = false;
     };
-  }, [t.folderRestoreFailed, t.folderRestored, t.folderRestoredNeedsPermission, t.selectedFolder]);
+  }, [supportsDirectoryPicker, t.folderRestoreFailed, t.folderRestored, t.folderRestoredNeedsPermission, t.selectedFolder]);
 
   function finishGeneration(nextMemo: HandoffMemo, nextYaml: string, message: string, nextSourceLog = "") {
     setMemo(nextMemo);
@@ -889,7 +903,7 @@ export default function HandoffMemoTool() {
   }
 
   async function chooseDirectory() {
-    if (!window.showDirectoryPicker) {
+    if (supportsDirectoryPicker !== true || !window.showDirectoryPicker) {
       setStatus(t.folderUnsupported);
       return;
     }
@@ -900,7 +914,11 @@ export default function HandoffMemoTool() {
       setDirectoryName(handle.name ?? t.selectedFolder);
       await saveDirectoryHandle(handle);
       setStatus(t.folderChosen);
-    } catch {
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setStatus(t.folderCanceled);
+        return;
+      }
       setStatus(t.folderCanceled);
     }
   }
@@ -956,7 +974,10 @@ export default function HandoffMemoTool() {
     if (directoryHandle) {
       try {
         if (!(await ensureDirectoryPermission(directoryHandle))) {
-          setStatus(t.folderPermissionDenied);
+          downloadPreparedFiles([markdownFile]);
+          setSourceLogText(markdownFile.content);
+          setSourceLogFilename(markdownFile.filename);
+          setStatus(`${t.folderPermissionDenied}\n\n${t.folderDownloadFallback}`);
           return;
         }
         const isEmptyFile = await saveTextFileToDirectory(
@@ -964,9 +985,13 @@ export default function HandoffMemoTool() {
           markdownFile.filename,
           markdownFile.content,
           monthFolder,
+          markdownFile.mimeType,
         );
         if (isEmptyFile) {
-          setStatus(t.zeroByteWarning);
+          downloadPreparedFiles([markdownFile]);
+          setSourceLogText(markdownFile.content);
+          setSourceLogFilename(markdownFile.filename);
+          setStatus(`${t.zeroByteWarning}\n\n${t.folderDownloadFallback}`);
           return;
         }
         setSourceLogText(markdownFile.content);
@@ -974,7 +999,14 @@ export default function HandoffMemoTool() {
         setStatus(t.savedTo(`${monthFolder}/${markdownFile.filename}`));
         return;
       } catch {
-        setStatus(t.folderSaveFailure);
+        try {
+          downloadPreparedFiles([markdownFile]);
+          setSourceLogText(markdownFile.content);
+          setSourceLogFilename(markdownFile.filename);
+          setStatus(`${t.folderSaveFailure}\n\n${t.folderDownloadFallback}`);
+        } catch {
+          setStatus(t.folderSaveFailure);
+        }
         return;
       }
     }
@@ -1040,7 +1072,13 @@ export default function HandoffMemoTool() {
     if (directoryHandle) {
       try {
         if (!(await ensureDirectoryPermission(directoryHandle))) {
-          setStatus(t.folderPermissionDenied);
+          downloadPreparedFiles(markdownFile ? [yamlFile, markdownFile] : [yamlFile]);
+          setYamlText(yamlFile.content);
+          if (markdownFile) {
+            setSourceLogText(markdownFile.content);
+            setSourceLogFilename(markdownFile.filename);
+          }
+          setStatus(`${t.folderPermissionDenied}\n\n${t.folderDownloadFallback}`);
           return;
         }
         const monthFolder = nextMemo ? getMemoMonthFolder(nextMemo) : formatMarkdownTimestamp().slice(0, 7);
@@ -1049,10 +1087,16 @@ export default function HandoffMemoTool() {
           yamlFile.filename,
           yamlFile.content,
           monthFolder,
+          yamlFile.mimeType,
         );
         if (isEmptyFile) {
           setYamlText(yamlFile.content);
-          setStatus(t.zeroByteWarning);
+          downloadPreparedFiles(markdownFile ? [yamlFile, markdownFile] : [yamlFile]);
+          if (markdownFile) {
+            setSourceLogText(markdownFile.content);
+            setSourceLogFilename(markdownFile.filename);
+          }
+          setStatus(`${t.zeroByteWarning}\n\n${t.folderDownloadFallback}`);
           return;
         }
         setYamlText(yamlFile.content);
@@ -1062,9 +1106,13 @@ export default function HandoffMemoTool() {
             markdownFile.filename,
             markdownFile.content,
             monthFolder,
+            markdownFile.mimeType,
           );
           if (isSourceEmptyFile) {
-            setStatus(t.zeroByteWarning);
+            downloadPreparedFiles([yamlFile, markdownFile]);
+            setSourceLogText(markdownFile.content);
+            setSourceLogFilename(markdownFile.filename);
+            setStatus(`${t.zeroByteWarning}\n\n${t.folderDownloadFallback}`);
             return;
           }
           setSourceLogText(markdownFile.content);
@@ -1075,7 +1123,17 @@ export default function HandoffMemoTool() {
         setStatus(t.savedTo(`${monthFolder}/${yamlFile.filename}`));
         return;
       } catch {
-        setStatus(t.folderSaveFailure);
+        try {
+          downloadPreparedFiles(markdownFile ? [yamlFile, markdownFile] : [yamlFile]);
+          setYamlText(yamlFile.content);
+          if (markdownFile) {
+            setSourceLogText(markdownFile.content);
+            setSourceLogFilename(markdownFile.filename);
+          }
+          setStatus(`${t.folderSaveFailure}\n\n${t.folderDownloadFallback}`);
+        } catch {
+          setStatus(t.folderSaveFailure);
+        }
         return;
       }
     }
@@ -1480,23 +1538,32 @@ export default function HandoffMemoTool() {
 
           {activeInputTab !== "prompt" && (
             <div className="flex flex-wrap items-start gap-3">
-              <button
-                type="button"
-                onClick={chooseDirectory}
-                className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
-              >
-                {t.chooseFolder}
-              </button>
-              <div className="min-w-[180px]">
-                <button
-                  type="button"
-                  onClick={save}
-                  className="h-11 rounded-md bg-stone-950 px-5 text-sm font-bold text-white hover:bg-stone-800"
-                >
-                  {t.saveToFolder}
-                </button>
-                <p className="mt-1 text-xs font-medium text-stone-500">{t.saveToFolderHelp}</p>
-              </div>
+              {supportsDirectoryPicker === true ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={chooseDirectory}
+                    className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
+                  >
+                    {t.chooseFolder}
+                  </button>
+                  <div className="min-w-[180px]">
+                    <button
+                      type="button"
+                      onClick={save}
+                      disabled={!directoryHandle}
+                      className="h-11 rounded-md bg-stone-950 px-5 text-sm font-bold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+                    >
+                      {t.saveToFolder}
+                    </button>
+                    <p className="mt-1 text-xs font-medium text-stone-500">{t.saveToFolderHelp}</p>
+                  </div>
+                </>
+              ) : supportsDirectoryPicker === false ? (
+                <p className="min-h-11 rounded-md border border-stone-300 bg-stone-50 px-4 py-3 text-sm font-bold text-stone-600">
+                  {t.folderUnsupported}
+                </p>
+              ) : null}
               <div className="min-w-[220px]">
                 <button
                   type="button"
@@ -1558,10 +1625,16 @@ export default function HandoffMemoTool() {
             <div className="rounded-md border border-stone-200 bg-white p-4 text-sm text-stone-700">
               <p className="font-semibold text-stone-950">{t.destination}</p>
               <p className="mt-1 font-bold text-stone-950">
-                {directoryHandle ? directoryName || t.selectedFolder : t.notSelected}
+                {supportsDirectoryPicker === false
+                  ? t.folderUnsupported
+                  : directoryHandle
+                    ? directoryName || t.selectedFolder
+                    : t.notSelected}
               </p>
               <p className="mt-1">
-                {directoryHandle
+                {supportsDirectoryPicker === false
+                  ? t.downloadFallback
+                  : directoryHandle
                   ? activeInputTab === "log-save"
                     ? t.selectedMarkdownPath
                     : t.selectedYamlPath
