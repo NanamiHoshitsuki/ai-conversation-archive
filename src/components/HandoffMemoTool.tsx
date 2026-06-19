@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import yaml from "js-yaml";
-import { SHIORI_ARCHIVE_PROMPT } from "@/lib/archivePrompt";
+import { SHIORI_ARCHIVE_PROMPT, SIMPLE_SHIORI_ARCHIVE_PROMPT } from "@/lib/archivePrompt";
 import {
   buildConversationTitleFilename,
   generateHandoffMemo,
@@ -49,6 +49,7 @@ type ChatMessage = {
 
 type OutputTab = "yaml" | "source";
 type InputTab = "memo-save" | "log-save" | "prompt" | "memo-create";
+type PromptVariant = "simple" | "full";
 
 type SourceInfo = {
   platform: string;
@@ -391,6 +392,7 @@ export default function HandoffMemoTool() {
   const [sourceLogText, setSourceLogText] = useState("");
   const [sourceLogFilename, setSourceLogFilename] = useState("");
   const [activeOutputTab, setActiveOutputTab] = useState<OutputTab>("yaml");
+  const [activePromptVariant, setActivePromptVariant] = useState<PromptVariant>("simple");
   const [sourceInfo, setSourceInfo] = useState<SourceInfo>(() => ({
     platform: "ChatGPT",
     conversationTitle: "",
@@ -408,6 +410,9 @@ export default function HandoffMemoTool() {
     activeInputTab === "log-save"
       ? currentSourceLogFilename
       : currentYamlFilename || conversationTitleFilename || memo?.filename || "未生成";
+  const activePrompt =
+    activePromptVariant === "simple" ? SIMPLE_SHIORI_ARCHIVE_PROMPT : SHIORI_ARCHIVE_PROMPT;
+  const activePromptLabel = activePromptVariant === "simple" ? "簡易版" : "完全版";
 
   function selectInputTab(tab: InputTab) {
     setActiveInputTab(tab);
@@ -761,14 +766,14 @@ export default function HandoffMemoTool() {
     setStatus("知識メモをダウンロードしました。会話ログはありません。");
   }
 
-  async function copyShioriPrompt() {
+  async function copyShioriPrompt(promptText = activePrompt, promptLabel = activePromptLabel) {
     try {
-      await navigator.clipboard.writeText(SHIORI_ARCHIVE_PROMPT);
-      setStatus("しおりプロンプトをコピーしました。");
+      await navigator.clipboard.writeText(promptText);
+      setStatus(`${promptLabel}しおりプロンプトをコピーしました。`);
     } catch {
       try {
         const textarea = document.createElement("textarea");
-        textarea.value = SHIORI_ARCHIVE_PROMPT;
+        textarea.value = promptText;
         textarea.setAttribute("readonly", "true");
         textarea.style.position = "fixed";
         textarea.style.left = "-9999px";
@@ -776,7 +781,7 @@ export default function HandoffMemoTool() {
         textarea.select();
         const copied = document.execCommand("copy");
         textarea.remove();
-        setStatus(copied ? "しおりプロンプトをコピーしました。" : "しおりプロンプトのコピーに失敗しました。");
+        setStatus(copied ? `${promptLabel}しおりプロンプトをコピーしました。` : "しおりプロンプトのコピーに失敗しました。");
       } catch {
         setStatus("しおりプロンプトのコピーに失敗しました。");
       }
@@ -887,15 +892,38 @@ export default function HandoffMemoTool() {
               <div className="mt-4 rounded-md border border-teal-100 bg-teal-50 p-4">
                 <p className="text-sm font-bold text-stone-950">しおりプロンプト</p>
                 <p className="mt-1 text-sm leading-6 text-stone-600">
-                  ChatGPT / Claude / Gemini のカスタム指示や会話冒頭に貼り付けて、/しおり や /archive 出力を使えるようにします。
+                  日常利用向けの簡易版と、設計・詳細運用向けの完全版をコピーできます。
                 </p>
+                <div className="mt-3 grid gap-1 rounded-md border border-teal-200 bg-white p-1 sm:grid-cols-2">
+                  {([
+                    ["simple", "簡易版"],
+                    ["full", "完全版"],
+                  ] as const).map(([variant, label]) => (
+                    <button
+                      key={variant}
+                      type="button"
+                      onClick={() => setActivePromptVariant(variant)}
+                      className={`h-10 rounded px-3 text-sm font-bold ${
+                        activePromptVariant === variant ? "bg-teal-700 text-white" : "text-stone-600 hover:bg-teal-50"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <button
                   type="button"
-                  onClick={copyShioriPrompt}
+                  onClick={() => copyShioriPrompt()}
                   className="mt-3 h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
                 >
-                  しおりプロンプトをコピー
+                  {activePromptLabel}をコピー
                 </button>
+                <textarea
+                  value={activePrompt}
+                  readOnly
+                  className="mt-3 min-h-[430px] w-full resize-y rounded-md border border-teal-200 bg-white p-4 font-mono text-xs leading-5 text-stone-800 outline-none"
+                  spellCheck={false}
+                />
                 <p className="mt-2 whitespace-pre-wrap text-xs font-semibold leading-5 text-stone-600">{status || "待機中"}</p>
               </div>
             )}
