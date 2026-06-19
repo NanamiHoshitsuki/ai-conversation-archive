@@ -2,7 +2,12 @@
 
 import { useEffect, useState } from "react";
 import yaml from "js-yaml";
-import { SHIORI_ARCHIVE_PROMPT, SIMPLE_SHIORI_ARCHIVE_PROMPT } from "@/lib/archivePrompt";
+import {
+  SHIORI_ARCHIVE_PROMPT,
+  SHIORI_ARCHIVE_PROMPT_EN,
+  SIMPLE_SHIORI_ARCHIVE_PROMPT,
+  SIMPLE_SHIORI_ARCHIVE_PROMPT_EN,
+} from "@/lib/archivePrompt";
 import {
   buildConversationTitleFilename,
   generateHandoffMemo,
@@ -34,13 +39,6 @@ declare global {
   }
 }
 
-const sampleLog = `ユーザー:
-AIとの会話を後で見返せる知識資産として残したい。
-決定事項と次の行動を上に置きたい。
-共通項目は固定し、用途依存の項目は拡張ブロックに分けたい。
-事業家なら business_opportunities、研究者なら research_questions、発信者なら content_ideas を使えるようにしたい。
-会話ログそのものではなく、再利用価値のある成果物を保存する仕組みにしたい。`;
-
 type ChatMessage = {
   id: number;
   role: "user" | "assistant";
@@ -50,6 +48,7 @@ type ChatMessage = {
 type OutputTab = "yaml" | "source";
 type InputTab = "memo-save" | "log-save" | "prompt" | "memo-create";
 type PromptVariant = "simple" | "full";
+type Language = "ja" | "en";
 
 type SourceInfo = {
   platform: string;
@@ -62,6 +61,7 @@ type SourceInfo = {
 const DIRECTORY_DB_NAME = "ai-conversation-archive";
 const DIRECTORY_STORE_NAME = "settings";
 const DIRECTORY_HANDLE_KEY = "directoryHandle";
+const LANGUAGE_STORAGE_KEY = "aiConversationArchiveLanguage";
 const EMPTY_CONTENT_MESSAGE = "保存する内容が空です。YAMLまたはMarkdownを読み込んでから保存してください。";
 const FOLDER_SAVE_FAILURE_MESSAGE = [
   "フォルダ保存に失敗しました。",
@@ -76,6 +76,212 @@ const ZERO_BYTE_WARNING_MESSAGE = [
   "Google Drive / OneDrive / iCloud Drive などの同期・マウントフォルダでは書き込みが完了しない場合があります。",
   "0 byte ファイルを削除して、ブラウザの「ダウンロード保存」を使ってください。",
 ].join("\n");
+
+const UI_TEXT = {
+  ja: {
+    language: "言語",
+    japanese: "Japanese",
+    english: "English",
+    appTitle: "AI会話知識アーカイブ",
+    tabMemoSave: "知識メモ保存（YAML）",
+    tabLogSave: "会話ログ保存（Markdown）",
+    tabPrompt: "しおりプロンプト",
+    tabMemoCreate: "知識メモ作成",
+    memoSaveTitle: "知識メモ保存（YAML）",
+    memoSaveDescription:
+      "ChatGPT、Claude、Geminiなどで生成した知識メモを貼り付けて保存します。conversation_title を入力すると YYYY-MM-DD_会話タイトル.yaml で保存します。",
+    memoSavePlaceholder: "filename: example.yaml",
+    logSaveTitle: "会話ログ保存（Markdown）",
+    logSaveDescription:
+      "ChatGPT、Claude、Geminiなどで生成した会話ログを貼り付けて保存します。Markdown形式のまま .md ファイルとして扱います。",
+    logSavePlaceholder: "# Source Conversation",
+    update: "更新",
+    promptTitle: "しおりプロンプト",
+    promptDescription: "日常利用向けの簡易版と、設計・詳細運用向けの完全版をコピーできます。",
+    simple: "簡易版",
+    full: "完全版",
+    copyPrompt: (label: string) => `${label}をコピー`,
+    memoCreateTitle: "知識メモ作成",
+    memoCreateDescription:
+      "会話ログ、個人メモ、アイデアメモ、note下書き、設計メモなどを貼り付け、再利用しやすい知識メモに変換します。",
+    memoCreatePlaceholder: "知識メモに変換したい内容をここに貼り付け",
+    createMemo: "知識メモを作成",
+    sampleInput: "サンプル入力",
+    filename: "filename",
+    status: "status",
+    standby: "待機中",
+    saveInfo: "保存情報",
+    saveInfoDescription: "元チャットを後から探しやすくするための情報です。conversation_title はファイル名にも利用されます。",
+    titleFilenameHelp: "ファイル名にも利用されます。",
+    sourceTitlePlaceholder: "AI会話アーカイブ設計",
+    conversationUrlHelp: "元チャットURL（任意）",
+    bookmarkHelp: "後で何を思い出したい会話かを記録します。",
+    bookmarkPlaceholder: "どのチャットだったか思い出すためのしおりメモ",
+    chooseFolder: "保存先フォルダを選択",
+    saveToFolder: "📁 フォルダに保存",
+    saveToFolderHelp: "選択したフォルダへ保存します",
+    download: "⬇️ ダウンロード",
+    downloadHelp: "ブラウザのダウンロードフォルダへ保存します",
+    autoDownload: "作成後に自動ダウンロード",
+    alsoSaveLog: "会話ログも保存する",
+    downloadLog: "会話ログをダウンロード",
+    downloadBoth: "両方ダウンロード",
+    destination: "保存先",
+    selectedFolder: "選択済みフォルダ",
+    notSelected: "未選択",
+    selectedYamlPath: "選択済みフォルダ / YYYY-MM / filename.yaml",
+    selectedMarkdownPath: "選択済みフォルダ / YYYY-MM / filename.md",
+    downloadFallback: "未選択の場合はブラウザのダウンロードフォルダへ保存",
+    folderUnsupportedHelp: "フォルダ指定に未対応のブラウザでは、ダウンロード保存を使います。",
+    syncFolderHelp:
+      "Google Driveなどの同期フォルダへ保存する場合、フォルダ保存が失敗することがあります。その場合は「ダウンロード」を使い、ブラウザの保存先をGoogle Drive同期フォルダに設定してください。",
+    outputPreview: "出力プレビュー",
+    yamlOutputTab: "知識メモ（YAML）",
+    sourceOutputTab: "会話ログ（Markdown）",
+    yamlOutputPlaceholder: "生成された知識メモがここに表示されます",
+    sourceOutputPlaceholder: "生成された会話ログがここに表示されます",
+    emptyContent: EMPTY_CONTENT_MESSAGE,
+    folderSaveFailure: FOLDER_SAVE_FAILURE_MESSAGE,
+    zeroByteWarning: ZERO_BYTE_WARNING_MESSAGE,
+    promptCopied: (label: string) => `${label}しおりプロンプトをコピーしました。`,
+    promptCopyFailed: "しおりプロンプトのコピーに失敗しました。",
+    memoUpdated: "知識メモを更新しました。",
+    logUpdated: "会話ログを更新しました。",
+    pasteMemoToUpdate: "読み込む知識メモを貼り付けてください。",
+    pasteLogToUpdate: "読み込む会話ログを貼り付けてください。",
+    pasteLogToCreate: "会話ログを貼り付けてください。",
+    folderUnsupported: "このブラウザではフォルダ保存に未対応です。ダウンロード保存を使ってください。",
+    folderChosen: "保存先フォルダを選択し、次回起動用に保存しました。",
+    folderCanceled: "フォルダ選択をキャンセルしました。",
+    folderRestored: "保存先フォルダを復元しました。",
+    folderRestoredNeedsPermission: "保存先フォルダを復元しました。保存時にアクセス許可が必要です。",
+    folderRestoreFailed: "保存先フォルダの復元に失敗しました。",
+    folderPermissionDenied: "保存先フォルダへのアクセスが許可されていません。",
+    generated: "知識メモを生成しました。",
+    autoDownloaded: "自動ダウンロードしました。",
+    downloadReady: "ダウンロードボタンが使えます。",
+    savedTo: (path: string) => `${path} に保存しました。`,
+    logDownloaded: "会話ログをダウンロードしました。",
+    memoDownloaded: "知識メモをダウンロードしました。",
+    bothDownloaded: "知識メモと会話ログをダウンロードしました。",
+    memoDownloadedNoLog: "知識メモをダウンロードしました。会話ログはありません。",
+    createOrPasteFirst: "先に知識メモを生成または貼り付けてください。",
+    noLog: "会話ログがありません。先に会話ログを生成してください。",
+    sampleLog: `ユーザー:
+AIとの会話を後で見返せる知識資産として残したい。
+決定事項と次の行動を上に置きたい。
+共通項目は固定し、用途依存の項目は拡張ブロックに分けたい。
+事業家なら business_opportunities、研究者なら research_questions、発信者なら content_ideas を使えるようにしたい。
+会話ログそのものではなく、再利用価値のある成果物を保存する仕組みにしたい。`,
+  },
+  en: {
+    language: "Language",
+    japanese: "Japanese",
+    english: "English",
+    appTitle: "AI Conversation Archive",
+    tabMemoSave: "Knowledge Memo Save (YAML)",
+    tabLogSave: "Conversation Log Save (Markdown)",
+    tabPrompt: "Bookmark Prompt",
+    tabMemoCreate: "Create Knowledge Memo",
+    memoSaveTitle: "Knowledge Memo Save (YAML)",
+    memoSaveDescription:
+      "Paste a knowledge memo generated by ChatGPT, Claude, Gemini, or another AI. If you enter conversation_title, it saves as YYYY-MM-DD_conversation-title.yaml.",
+    memoSavePlaceholder: "filename: example.yaml",
+    logSaveTitle: "Conversation Log Save (Markdown)",
+    logSaveDescription:
+      "Paste a conversation log generated by ChatGPT, Claude, Gemini, or another AI. It is saved as a .md Markdown file.",
+    logSavePlaceholder: "# Source Conversation",
+    update: "Update",
+    promptTitle: "Bookmark Prompt",
+    promptDescription: "Copy the simple daily-use prompt or the full prompt for detailed archive workflows.",
+    simple: "Simple",
+    full: "Full",
+    copyPrompt: (label: string) => `Copy ${label}`,
+    memoCreateTitle: "Create Knowledge Memo",
+    memoCreateDescription:
+      "Paste a conversation log, personal note, idea memo, draft, or design note and convert it into a reusable knowledge memo.",
+    memoCreatePlaceholder: "Paste content to convert into a knowledge memo",
+    createMemo: "Create Knowledge Memo",
+    sampleInput: "Use Sample",
+    filename: "filename",
+    status: "status",
+    standby: "Ready",
+    saveInfo: "Save Metadata",
+    saveInfoDescription: "Information that helps you find the original chat later. conversation_title is also used for the filename.",
+    titleFilenameHelp: "Also used for the filename.",
+    sourceTitlePlaceholder: "AI Conversation Archive Design",
+    conversationUrlHelp: "Original chat URL (optional)",
+    bookmarkHelp: "Record what you want to remember from this conversation.",
+    bookmarkPlaceholder: "A bookmark note to help you remember what this chat was about",
+    chooseFolder: "Choose Save Folder",
+    saveToFolder: "📁 Save to Folder",
+    saveToFolderHelp: "Save to the selected folder",
+    download: "⬇️ Download",
+    downloadHelp: "Save using the browser download folder",
+    autoDownload: "Download automatically after creation",
+    alsoSaveLog: "Also save conversation log",
+    downloadLog: "Download Conversation Log",
+    downloadBoth: "Download Both",
+    destination: "Save Destination",
+    selectedFolder: "Selected folder",
+    notSelected: "Not selected",
+    selectedYamlPath: "Selected folder / YYYY-MM / filename.yaml",
+    selectedMarkdownPath: "Selected folder / YYYY-MM / filename.md",
+    downloadFallback: "If no folder is selected, files are saved to the browser download folder",
+    folderUnsupportedHelp: "If your browser does not support folder selection, use download instead.",
+    syncFolderHelp:
+      "Saving directly to synced folders such as Google Drive can fail. If that happens, use Download and set your browser download location to the synced folder.",
+    outputPreview: "Output Preview",
+    yamlOutputTab: "Knowledge Memo (YAML)",
+    sourceOutputTab: "Conversation Log (Markdown)",
+    yamlOutputPlaceholder: "Generated knowledge memo appears here",
+    sourceOutputPlaceholder: "Generated conversation log appears here",
+    emptyContent: "There is no content to save. Load YAML or Markdown before saving.",
+    folderSaveFailure: [
+      "Folder save failed.",
+      "",
+      "Browser folder saving may not write correctly to synced or mounted folders such as Google Drive / OneDrive / iCloud Drive.",
+      "",
+      "A 0 byte file may remain. If that happens, delete it and use browser Download instead.",
+    ].join("\n"),
+    zeroByteWarning: [
+      "The saved file appears to be 0 bytes.",
+      "",
+      "Synced or mounted folders such as Google Drive / OneDrive / iCloud Drive may fail to finish writing.",
+      "Delete the 0 byte file and use browser Download instead.",
+    ].join("\n"),
+    promptCopied: (label: string) => `${label} bookmark prompt copied.`,
+    promptCopyFailed: "Failed to copy bookmark prompt.",
+    memoUpdated: "Knowledge memo updated.",
+    logUpdated: "Conversation log updated.",
+    pasteMemoToUpdate: "Paste a knowledge memo to update.",
+    pasteLogToUpdate: "Paste a conversation log to update.",
+    pasteLogToCreate: "Paste content first.",
+    folderUnsupported: "This browser does not support folder saving. Use Download instead.",
+    folderChosen: "Save folder selected and stored for next launch.",
+    folderCanceled: "Folder selection was canceled.",
+    folderRestored: "Save folder restored.",
+    folderRestoredNeedsPermission: "Save folder restored. Permission is required when saving.",
+    folderRestoreFailed: "Failed to restore the save folder.",
+    folderPermissionDenied: "Save folder access was not granted.",
+    generated: "Knowledge memo generated.",
+    autoDownloaded: "Auto-downloaded.",
+    downloadReady: "Download button is available.",
+    savedTo: (path: string) => `Saved to ${path}.`,
+    logDownloaded: "Conversation log downloaded.",
+    memoDownloaded: "Knowledge memo downloaded.",
+    bothDownloaded: "Knowledge memo and conversation log downloaded.",
+    memoDownloadedNoLog: "Knowledge memo downloaded. No conversation log is available.",
+    createOrPasteFirst: "Create or paste a knowledge memo first.",
+    noLog: "No conversation log available. Generate one first.",
+    sampleLog: `User:
+I want to preserve AI conversations as knowledge assets that can be reviewed later.
+I want decisions and next actions near the top.
+Common fields should be fixed, and use-case specific fields should be extension blocks.
+For entrepreneurs, use business_opportunities; for researchers, use research_questions; for creators, use content_ideas.
+The goal is not to save the raw conversation, but to preserve reusable outcomes.`,
+  },
+} as const;
 
 function downloadTextFile(filename: string, text: string, type = "text/plain;charset=utf-8") {
   const blob = new Blob([text], { type });
@@ -380,6 +586,11 @@ async function writeTextToDirectory(directory: WritableDirectoryHandle, filename
 }
 
 export default function HandoffMemoTool() {
+  const [language, setLanguage] = useState<Language>(() => {
+    if (typeof window === "undefined") return "ja";
+    const savedLanguage = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    return savedLanguage === "en" || savedLanguage === "ja" ? savedLanguage : "ja";
+  });
   const [activeInputTab, setActiveInputTab] = useState<InputTab>("memo-save");
   const [conversationLog, setConversationLog] = useState("");
   const [memo, setMemo] = useState<HandoffMemo | null>(null);
@@ -400,6 +611,7 @@ export default function HandoffMemoTool() {
     savedAt: formatSourceTimestamp(),
     bookmark: "",
   }));
+  const t = UI_TEXT[language];
   const conversationTitleFilename = getConversationTitleFilename(sourceInfo);
   const previewYamlText = yamlText ? mergeSourceMetadataIntoYaml(yamlText, sourceInfo) : "";
   const currentYamlFilename = previewYamlText ? getYamlDownloadFilename(previewYamlText) : "";
@@ -409,10 +621,16 @@ export default function HandoffMemoTool() {
   const activeFilename =
     activeInputTab === "log-save"
       ? currentSourceLogFilename
-      : currentYamlFilename || conversationTitleFilename || memo?.filename || "未生成";
+      : currentYamlFilename || conversationTitleFilename || memo?.filename || t.standby;
   const activePrompt =
-    activePromptVariant === "simple" ? SIMPLE_SHIORI_ARCHIVE_PROMPT : SHIORI_ARCHIVE_PROMPT;
-  const activePromptLabel = activePromptVariant === "simple" ? "簡易版" : "完全版";
+    activePromptVariant === "simple"
+      ? language === "en"
+        ? SIMPLE_SHIORI_ARCHIVE_PROMPT_EN
+        : SIMPLE_SHIORI_ARCHIVE_PROMPT
+      : language === "en"
+        ? SHIORI_ARCHIVE_PROMPT_EN
+        : SHIORI_ARCHIVE_PROMPT;
+  const activePromptLabel = activePromptVariant === "simple" ? t.simple : t.full;
 
   function selectInputTab(tab: InputTab) {
     setActiveInputTab(tab);
@@ -443,6 +661,10 @@ export default function HandoffMemoTool() {
   }
 
   useEffect(() => {
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+  }, [language]);
+
+  useEffect(() => {
     let isMounted = true;
 
     async function restoreDirectory() {
@@ -453,17 +675,17 @@ export default function HandoffMemoTool() {
         if (!savedHandle || !isMounted) return;
 
         setDirectoryHandle(savedHandle);
-        setDirectoryName(savedHandle.name ?? "選択済みフォルダ");
+        setDirectoryName(savedHandle.name ?? t.selectedFolder);
 
         const permission = await getDirectoryPermission(savedHandle);
         if (!isMounted) return;
         setStatus(
           permission === "granted"
-            ? "保存先フォルダを復元しました。"
-            : "保存先フォルダを復元しました。保存時にアクセス許可が必要です。",
+            ? t.folderRestored
+            : t.folderRestoredNeedsPermission,
         );
       } catch {
-        if (isMounted) setStatus("保存先フォルダの復元に失敗しました。");
+        if (isMounted) setStatus(t.folderRestoreFailed);
       }
     }
 
@@ -472,7 +694,7 @@ export default function HandoffMemoTool() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [t.folderRestoreFailed, t.folderRestored, t.folderRestoredNeedsPermission, t.selectedFolder]);
 
   function finishGeneration(nextMemo: HandoffMemo, nextYaml: string, message: string, nextSourceLog = "") {
     setMemo(nextMemo);
@@ -483,11 +705,11 @@ export default function HandoffMemoTool() {
 
     if (autoDownload) {
       downloadYaml(getYamlDownloadFilename(nextYaml), nextYaml);
-      setStatus(`${message} 自動ダウンロードしました。`);
+      setStatus(`${message} ${t.autoDownloaded}`);
       return;
     }
 
-    setStatus(`${message} ダウンロードボタンが使えます。`);
+    setStatus(`${message} ${t.downloadReady}`);
   }
 
   function buildSourceLogMarkdown(params: {
@@ -562,35 +784,35 @@ export default function HandoffMemoTool() {
   function generate() {
     const source = conversationLog.trim();
     if (!source) {
-      setStatus("会話ログを貼り付けてください。");
+      setStatus(t.pasteLogToCreate);
       return;
     }
 
     const { nextMemo, nextYaml, nextSourceLog } = buildBulkMemo(source);
-    finishGeneration(nextMemo, nextYaml, "知識メモを生成しました。", nextSourceLog);
+    finishGeneration(nextMemo, nextYaml, t.generated, nextSourceLog);
   }
 
   async function chooseDirectory() {
     if (!window.showDirectoryPicker) {
-      setStatus("このブラウザではフォルダ保存に未対応です。ダウンロード保存を使ってください。");
+      setStatus(t.folderUnsupported);
       return;
     }
 
     try {
       const handle = await window.showDirectoryPicker();
       setDirectoryHandle(handle);
-      setDirectoryName(handle.name ?? "選択済みフォルダ");
+      setDirectoryName(handle.name ?? t.selectedFolder);
       await saveDirectoryHandle(handle);
-      setStatus("保存先フォルダを選択し、次回起動用に保存しました。");
+      setStatus(t.folderChosen);
     } catch {
-      setStatus("フォルダ選択をキャンセルしました。");
+      setStatus(t.folderCanceled);
     }
   }
 
   function loadCurrentInput() {
     if (activeInputTab === "memo-save") {
       if (!yamlText.trim()) {
-        setStatus("読み込む知識メモを貼り付けてください。");
+        setStatus(t.pasteMemoToUpdate);
         return;
       }
       const extractedSourceInfo = extractSourceInfoFromYaml(yamlText);
@@ -602,18 +824,18 @@ export default function HandoffMemoTool() {
       setSourceInfo(nextSourceInfo);
       setYamlText(mergeSourceMetadataIntoYaml(yamlText, nextSourceInfo));
       setActiveOutputTab("yaml");
-      setStatus("知識メモを更新しました。");
+      setStatus(t.memoUpdated);
       return;
     }
 
     if (activeInputTab === "log-save") {
       if (!sourceLogText.trim()) {
-        setStatus("読み込む会話ログを貼り付けてください。");
+        setStatus(t.pasteLogToUpdate);
         return;
       }
       setSourceLogFilename((filename) => filename || getSourceOnlyDownloadFilename());
       setActiveOutputTab("source");
-      setStatus("会話ログを更新しました。");
+      setStatus(t.logUpdated);
       return;
     }
 
@@ -623,7 +845,7 @@ export default function HandoffMemoTool() {
   async function saveSourceLogFile() {
     const nextSourceLog = mergeSourceMetadataIntoMarkdown(sourceLogText, sourceInfo).trim();
     if (!sourceLogText.trim() || !nextSourceLog) {
-      setStatus(EMPTY_CONTENT_MESSAGE);
+      setStatus(t.emptyContent);
       return;
     }
 
@@ -632,24 +854,24 @@ export default function HandoffMemoTool() {
     if (directoryHandle) {
       try {
         if (!(await ensureDirectoryPermission(directoryHandle))) {
-          setStatus("保存先フォルダへのアクセスが許可されていません。");
+          setStatus(t.folderPermissionDenied);
           return;
         }
         const isEmptyFile = await writeTextToDirectory(directoryHandle, filename, nextSourceLog, monthFolder);
         if (isEmptyFile) {
-          setStatus(ZERO_BYTE_WARNING_MESSAGE);
+          setStatus(t.zeroByteWarning);
           return;
         }
-        setStatus(`${monthFolder}/${filename} に保存しました。`);
+        setStatus(t.savedTo(`${monthFolder}/${filename}`));
         return;
       } catch {
-        setStatus(FOLDER_SAVE_FAILURE_MESSAGE);
+        setStatus(t.folderSaveFailure);
         return;
       }
     }
 
     downloadTextFile(filename, nextSourceLog, "text/markdown;charset=utf-8");
-    setStatus("会話ログをダウンロードしました。");
+    setStatus(t.logDownloaded);
   }
 
   async function save() {
@@ -659,7 +881,7 @@ export default function HandoffMemoTool() {
     }
 
     if (!yamlText.trim() && (activeInputTab === "memo-save" || !conversationLog.trim())) {
-      setStatus(EMPTY_CONTENT_MESSAGE);
+      setStatus(t.emptyContent);
       return;
     }
 
@@ -669,11 +891,11 @@ export default function HandoffMemoTool() {
 
     if (!nextYaml.trim()) {
       if (isPastedYaml) {
-        setStatus(EMPTY_CONTENT_MESSAGE);
+        setStatus(t.emptyContent);
         return;
       }
       if (!conversationLog.trim()) {
-        setStatus(EMPTY_CONTENT_MESSAGE);
+        setStatus(t.emptyContent);
         return;
       }
       const generated = buildBulkMemo(conversationLog.trim());
@@ -688,7 +910,7 @@ export default function HandoffMemoTool() {
     if (directoryHandle) {
       try {
         if (!(await ensureDirectoryPermission(directoryHandle))) {
-          setStatus("保存先フォルダへのアクセスが許可されていません。");
+          setStatus(t.folderPermissionDenied);
           return;
         }
         const monthFolder = nextMemo ? getMemoMonthFolder(nextMemo) : formatMarkdownTimestamp().slice(0, 7);
@@ -700,21 +922,21 @@ export default function HandoffMemoTool() {
         }
         if (isEmptyFile) {
           setYamlText(nextYaml);
-          setStatus(ZERO_BYTE_WARNING_MESSAGE);
+          setStatus(t.zeroByteWarning);
           return;
         }
         setYamlText(nextYaml);
-        setStatus(`${monthFolder}/${getYamlDownloadFilename(nextYaml)} に保存しました。`);
+        setStatus(t.savedTo(`${monthFolder}/${getYamlDownloadFilename(nextYaml)}`));
         return;
       } catch {
-        setStatus(FOLDER_SAVE_FAILURE_MESSAGE);
+        setStatus(t.folderSaveFailure);
         return;
       }
     }
 
     setYamlText(nextYaml);
     downloadYaml(getYamlDownloadFilename(nextYaml), nextYaml);
-    setStatus("知識メモをダウンロードしました。");
+    setStatus(t.memoDownloaded);
   }
 
   function download() {
@@ -724,29 +946,29 @@ export default function HandoffMemoTool() {
     }
 
     if (!yamlText) {
-      setStatus("先に知識メモを生成または貼り付けてください。");
+      setStatus(t.createOrPasteFirst);
       return;
     }
     const nextYaml = mergeSourceMetadataIntoYaml(yamlText, sourceInfo);
     setYamlText(nextYaml);
     downloadYaml(getYamlDownloadFilename(nextYaml), nextYaml);
-    setStatus("知識メモをダウンロードしました。");
+    setStatus(t.memoDownloaded);
   }
 
   function downloadSourceLog() {
     if (!sourceLogText) {
-      setStatus("会話ログがありません。先に会話ログを生成してください。");
+      setStatus(t.noLog);
       return;
     }
     const nextSourceLog = mergeSourceMetadataIntoMarkdown(sourceLogText, sourceInfo);
     setSourceLogText(nextSourceLog);
     downloadTextFile(currentSourceLogFilename, nextSourceLog, "text/markdown;charset=utf-8");
-    setStatus("会話ログをダウンロードしました。");
+    setStatus(t.logDownloaded);
   }
 
   function downloadBoth() {
     if (!yamlText) {
-      setStatus("先に知識メモを生成または貼り付けてください。");
+      setStatus(t.createOrPasteFirst);
       return;
     }
     const nextYaml = mergeSourceMetadataIntoYaml(yamlText, sourceInfo);
@@ -760,16 +982,16 @@ export default function HandoffMemoTool() {
         nextSourceLog,
         "text/markdown;charset=utf-8",
       );
-      setStatus("知識メモと会話ログをダウンロードしました。");
+      setStatus(t.bothDownloaded);
       return;
     }
-    setStatus("知識メモをダウンロードしました。会話ログはありません。");
+    setStatus(t.memoDownloadedNoLog);
   }
 
   async function copyShioriPrompt(promptText = activePrompt, promptLabel = activePromptLabel) {
     try {
       await navigator.clipboard.writeText(promptText);
-      setStatus(`${promptLabel}しおりプロンプトをコピーしました。`);
+      setStatus(t.promptCopied(promptLabel));
     } catch {
       try {
         const textarea = document.createElement("textarea");
@@ -781,9 +1003,9 @@ export default function HandoffMemoTool() {
         textarea.select();
         const copied = document.execCommand("copy");
         textarea.remove();
-        setStatus(copied ? `${promptLabel}しおりプロンプトをコピーしました。` : "しおりプロンプトのコピーに失敗しました。");
+        setStatus(copied ? t.promptCopied(promptLabel) : t.promptCopyFailed);
       } catch {
-        setStatus("しおりプロンプトのコピーに失敗しました。");
+        setStatus(t.promptCopyFailed);
       }
     }
   }
@@ -794,7 +1016,27 @@ export default function HandoffMemoTool() {
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">Reusable conversation archive</p>
-            <h1 className="mt-1 text-xl font-bold">AI会話知識アーカイブ</h1>
+            <h1 className="mt-1 text-xl font-bold">{t.appTitle}</h1>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-stone-500">{t.language}</p>
+            <div className="mt-1 grid grid-cols-2 gap-1 rounded-md border border-stone-300 bg-stone-100 p-1">
+              {([
+                ["ja", t.japanese],
+                ["en", t.english],
+              ] as const).map(([nextLanguage, label]) => (
+                <button
+                  key={nextLanguage}
+                  type="button"
+                  onClick={() => setLanguage(nextLanguage)}
+                  className={`h-9 rounded px-3 text-sm font-bold ${
+                    language === nextLanguage ? "bg-stone-950 text-white" : "text-stone-600 hover:bg-white"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </header>
@@ -804,10 +1046,10 @@ export default function HandoffMemoTool() {
           <div className="rounded-md border border-stone-200 bg-white p-4">
             <div className="grid gap-1 rounded-md border border-stone-300 bg-stone-100 p-1 sm:grid-cols-2 xl:grid-cols-4">
               {([
-                ["memo-save", "知識メモ保存（YAML）"],
-                ["log-save", "会話ログ保存（Markdown）"],
-                ["prompt", "しおりプロンプト"],
-                ["memo-create", "知識メモ作成"],
+                ["memo-save", t.tabMemoSave],
+                ["log-save", t.tabLogSave],
+                ["prompt", t.tabPrompt],
+                ["memo-create", t.tabMemoCreate],
               ] as const).map(([tab, label]) => (
                 <button
                   key={tab}
@@ -825,10 +1067,10 @@ export default function HandoffMemoTool() {
             {activeInputTab === "memo-save" && (
               <div className="mt-4">
                 <label htmlFor="memo-save-input" className="text-sm font-bold">
-                  知識メモ保存（YAML）
+                  {t.memoSaveTitle}
                 </label>
                 <p className="mt-1 text-sm leading-6 text-stone-600">
-                  ChatGPT、Claude、Geminiなどで生成した知識メモを貼り付けて保存します。conversation_title を入力すると YYYY-MM-DD_会話タイトル.yaml で保存します。
+                  {t.memoSaveDescription}
                 </p>
                 <textarea
                   id="memo-save-input"
@@ -841,7 +1083,7 @@ export default function HandoffMemoTool() {
                     setActiveOutputTab("yaml");
                   }}
                   className="mt-2 min-h-[430px] w-full resize-y rounded-md border border-stone-300 bg-white p-4 font-mono text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                  placeholder="filename: example.yaml"
+                  placeholder={t.memoSavePlaceholder}
                   spellCheck={false}
                 />
                 <div className="mt-3 flex flex-wrap gap-3">
@@ -850,7 +1092,7 @@ export default function HandoffMemoTool() {
                     onClick={loadCurrentInput}
                     className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
                   >
-                    更新
+                    {t.update}
                   </button>
                 </div>
               </div>
@@ -859,10 +1101,10 @@ export default function HandoffMemoTool() {
             {activeInputTab === "log-save" && (
               <div className="mt-4">
                 <label htmlFor="log-save-input" className="text-sm font-bold">
-                  会話ログ保存（Markdown）
+                  {t.logSaveTitle}
                 </label>
                 <p className="mt-1 text-sm leading-6 text-stone-600">
-                  ChatGPT、Claude、Geminiなどで生成した会話ログを貼り付けて保存します。Markdown形式のまま .md ファイルとして扱います。
+                  {t.logSaveDescription}
                 </p>
                 <textarea
                   id="log-save-input"
@@ -873,7 +1115,7 @@ export default function HandoffMemoTool() {
                     setActiveOutputTab("source");
                   }}
                   className="mt-2 min-h-[430px] w-full resize-y rounded-md border border-stone-300 bg-white p-4 font-mono text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                  placeholder="# Source Conversation"
+                  placeholder={t.logSavePlaceholder}
                   spellCheck={false}
                 />
                 <div className="mt-3 flex flex-wrap gap-3">
@@ -882,7 +1124,7 @@ export default function HandoffMemoTool() {
                     onClick={loadCurrentInput}
                     className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
                   >
-                    更新
+                    {t.update}
                   </button>
                 </div>
               </div>
@@ -890,14 +1132,14 @@ export default function HandoffMemoTool() {
 
             {activeInputTab === "prompt" && (
               <div className="mt-4 rounded-md border border-teal-100 bg-teal-50 p-4">
-                <p className="text-sm font-bold text-stone-950">しおりプロンプト</p>
+                <p className="text-sm font-bold text-stone-950">{t.promptTitle}</p>
                 <p className="mt-1 text-sm leading-6 text-stone-600">
-                  日常利用向けの簡易版と、設計・詳細運用向けの完全版をコピーできます。
+                  {t.promptDescription}
                 </p>
                 <div className="mt-3 grid gap-1 rounded-md border border-teal-200 bg-white p-1 sm:grid-cols-2">
                   {([
-                    ["simple", "簡易版"],
-                    ["full", "完全版"],
+                    ["simple", t.simple],
+                    ["full", t.full],
                   ] as const).map(([variant, label]) => (
                     <button
                       key={variant}
@@ -916,7 +1158,7 @@ export default function HandoffMemoTool() {
                   onClick={() => copyShioriPrompt()}
                   className="mt-3 h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
                 >
-                  {activePromptLabel}をコピー
+                  {t.copyPrompt(activePromptLabel)}
                 </button>
                 <textarea
                   value={activePrompt}
@@ -924,24 +1166,24 @@ export default function HandoffMemoTool() {
                   className="mt-3 min-h-[430px] w-full resize-y rounded-md border border-teal-200 bg-white p-4 font-mono text-xs leading-5 text-stone-800 outline-none"
                   spellCheck={false}
                 />
-                <p className="mt-2 whitespace-pre-wrap text-xs font-semibold leading-5 text-stone-600">{status || "待機中"}</p>
+                <p className="mt-2 whitespace-pre-wrap text-xs font-semibold leading-5 text-stone-600">{status || t.standby}</p>
               </div>
             )}
 
             {activeInputTab === "memo-create" && (
               <div className="mt-4">
                 <label htmlFor="conversation-log" className="text-sm font-bold">
-                  知識メモ作成
+                  {t.memoCreateTitle}
                 </label>
                 <p className="mt-1 text-sm leading-6 text-stone-600">
-                  会話ログ、個人メモ、アイデアメモ、note下書き、設計メモなどを貼り付け、再利用しやすい知識メモに変換します。
+                  {t.memoCreateDescription}
                 </p>
                 <textarea
                   id="conversation-log"
                   value={conversationLog}
                   onChange={(event) => setConversationLog(event.target.value)}
                   className="mt-2 min-h-[430px] w-full resize-y rounded-md border border-stone-300 bg-white p-4 font-mono text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                  placeholder="知識メモに変換したい内容をここに貼り付け"
+                  placeholder={t.memoCreatePlaceholder}
                 />
                 <div className="mt-3 flex flex-wrap gap-3">
                   <button
@@ -949,14 +1191,14 @@ export default function HandoffMemoTool() {
                     onClick={generate}
                     className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800"
                   >
-                    知識メモを作成
+                    {t.createMemo}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setConversationLog(sampleLog)}
+                    onClick={() => setConversationLog(t.sampleLog)}
                     className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
                   >
-                    サンプル入力
+                    {t.sampleInput}
                   </button>
                 </div>
               </div>
@@ -966,21 +1208,21 @@ export default function HandoffMemoTool() {
           {activeInputTab !== "prompt" && (
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-md border border-stone-200 bg-white p-4">
-                <p className="text-xs font-semibold text-stone-500">filename</p>
+                <p className="text-xs font-semibold text-stone-500">{t.filename}</p>
                 <p className="mt-2 break-words text-sm font-bold">{activeFilename}</p>
               </div>
               <div className="rounded-md border border-stone-200 bg-white p-4">
-                <p className="text-xs font-semibold text-stone-500">status</p>
-                <p className="mt-2 whitespace-pre-wrap text-sm font-bold leading-6">{status || "待機中"}</p>
+                <p className="text-xs font-semibold text-stone-500">{t.status}</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm font-bold leading-6">{status || t.standby}</p>
               </div>
             </div>
           )}
 
           {activeInputTab !== "prompt" && (
             <div className="rounded-md border border-stone-200 bg-stone-50 p-3">
-              <p className="text-sm font-bold text-stone-950">保存情報</p>
+              <p className="text-sm font-bold text-stone-950">{t.saveInfo}</p>
               <p className="mt-1 text-xs leading-5 text-stone-500">
-                元チャットを後から探しやすくするための情報です。conversation_title はファイル名にも利用されます。
+                {t.saveInfoDescription}
               </p>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <div>
@@ -1016,9 +1258,9 @@ export default function HandoffMemoTool() {
                     value={sourceInfo.conversationTitle}
                     onChange={(event) => updateSourceInfo("conversationTitle", event.target.value)}
                     className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                    placeholder="AI会話アーカイブ設計"
+                    placeholder={t.sourceTitlePlaceholder}
                   />
-                  <p className="mt-1 text-xs leading-5 text-stone-500">ファイル名にも利用されます。</p>
+                  <p className="mt-1 text-xs leading-5 text-stone-500">{t.titleFilenameHelp}</p>
                 </div>
                 <div>
                   <label htmlFor="source-url" className="text-xs font-bold text-stone-600">
@@ -1031,7 +1273,7 @@ export default function HandoffMemoTool() {
                     className="mt-1 h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
                     placeholder="https://chatgpt.com/c/..."
                   />
-                  <p className="mt-1 text-xs leading-5 text-stone-500">元チャットURL（任意）</p>
+                  <p className="mt-1 text-xs leading-5 text-stone-500">{t.conversationUrlHelp}</p>
                 </div>
               </div>
               <div className="mt-3">
@@ -1043,9 +1285,9 @@ export default function HandoffMemoTool() {
                   value={sourceInfo.bookmark}
                   onChange={(event) => updateSourceInfo("bookmark", event.target.value)}
                   className="mt-1 min-h-20 w-full resize-y rounded-md border border-stone-300 bg-white p-3 text-sm leading-6 outline-none focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                  placeholder="どのチャットだったか思い出すためのしおりメモ"
+                  placeholder={t.bookmarkPlaceholder}
                 />
-                <p className="mt-1 text-xs leading-5 text-stone-500">後で何を思い出したい会話かを記録します。</p>
+                <p className="mt-1 text-xs leading-5 text-stone-500">{t.bookmarkHelp}</p>
               </div>
             </div>
           )}
@@ -1057,7 +1299,7 @@ export default function HandoffMemoTool() {
                 onClick={chooseDirectory}
                 className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
               >
-                保存先フォルダを選択
+                {t.chooseFolder}
               </button>
               <div className="min-w-[180px]">
                 <button
@@ -1065,9 +1307,9 @@ export default function HandoffMemoTool() {
                   onClick={save}
                   className="h-11 rounded-md bg-stone-950 px-5 text-sm font-bold text-white hover:bg-stone-800"
                 >
-                  📁 フォルダに保存
+                  {t.saveToFolder}
                 </button>
-                <p className="mt-1 text-xs font-medium text-stone-500">選択したフォルダへ保存します</p>
+                <p className="mt-1 text-xs font-medium text-stone-500">{t.saveToFolderHelp}</p>
               </div>
               <div className="min-w-[220px]">
                 <button
@@ -1075,9 +1317,9 @@ export default function HandoffMemoTool() {
                   onClick={download}
                   className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
                 >
-                  ⬇️ ダウンロード
+                  {t.download}
                 </button>
-                <p className="mt-1 text-xs font-medium text-stone-500">ブラウザのダウンロードフォルダへ保存します</p>
+                <p className="mt-1 text-xs font-medium text-stone-500">{t.downloadHelp}</p>
               </div>
               {activeInputTab === "memo-create" && (
                 <label className="flex h-11 items-center gap-2 rounded-md border border-stone-300 bg-white px-4 text-sm font-bold">
@@ -1087,7 +1329,7 @@ export default function HandoffMemoTool() {
                     onChange={(event) => setAutoDownload(event.target.checked)}
                     className="h-4 w-4 accent-teal-700"
                   />
-                  作成後に自動ダウンロード
+                  {t.autoDownload}
                 </label>
               )}
               {activeInputTab === "memo-create" && (
@@ -1098,7 +1340,7 @@ export default function HandoffMemoTool() {
                     onChange={(event) => setSaveSourceLog(event.target.checked)}
                     className="h-4 w-4 accent-teal-700"
                   />
-                  会話ログも保存する
+                  {t.alsoSaveLog}
                 </label>
               )}
               {sourceLogText && activeInputTab !== "log-save" && (
@@ -1108,14 +1350,14 @@ export default function HandoffMemoTool() {
                     onClick={downloadSourceLog}
                     className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
                   >
-                    会話ログをダウンロード
+                    {t.downloadLog}
                   </button>
                   <button
                     type="button"
                     onClick={downloadBoth}
                     className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
                   >
-                    両方ダウンロード
+                    {t.downloadBoth}
                   </button>
                 </>
               )}
@@ -1124,22 +1366,22 @@ export default function HandoffMemoTool() {
 
           {activeInputTab !== "prompt" && (
             <div className="rounded-md border border-stone-200 bg-white p-4 text-sm text-stone-700">
-              <p className="font-semibold text-stone-950">保存先</p>
+              <p className="font-semibold text-stone-950">{t.destination}</p>
               <p className="mt-1 font-bold text-stone-950">
-                {directoryHandle ? directoryName || "選択済みフォルダ" : "未選択"}
+                {directoryHandle ? directoryName || t.selectedFolder : t.notSelected}
               </p>
               <p className="mt-1">
                 {directoryHandle
                   ? activeInputTab === "log-save"
-                    ? "選択済みフォルダ / YYYY-MM / filename.md"
-                    : "選択済みフォルダ / YYYY-MM / filename.yaml"
-                  : "未選択の場合はブラウザのダウンロードフォルダへ保存"}
+                    ? t.selectedMarkdownPath
+                    : t.selectedYamlPath
+                  : t.downloadFallback}
               </p>
               <p className="mt-2 text-stone-500">
-                フォルダ指定に未対応のブラウザでは、ダウンロード保存を使います。
+                {t.folderUnsupportedHelp}
               </p>
               <p className="mt-2 text-stone-500">
-                Google Driveなどの同期フォルダへ保存する場合、フォルダ保存が失敗することがあります。その場合は「ダウンロード」を使い、ブラウザの保存先をGoogle Drive同期フォルダに設定してください。
+                {t.syncFolderHelp}
               </p>
             </div>
           )}
@@ -1149,7 +1391,7 @@ export default function HandoffMemoTool() {
         <section className="space-y-4">
           <div>
             <label htmlFor="yaml-output" className="text-sm font-bold">
-              出力プレビュー
+              {t.outputPreview}
             </label>
             <div className="mt-2 flex rounded-md border border-stone-300 bg-stone-100 p-1">
               {(["yaml", "source"] as const).map((tab) => (
@@ -1161,7 +1403,7 @@ export default function HandoffMemoTool() {
                     activeOutputTab === tab ? "bg-stone-950 text-white" : "text-stone-600 hover:bg-white"
                   }`}
                 >
-                  {tab === "yaml" ? "知識メモ（YAML）" : "会話ログ（Markdown）"}
+                  {tab === "yaml" ? t.yamlOutputTab : t.sourceOutputTab}
                 </button>
               ))}
             </div>
@@ -1176,7 +1418,7 @@ export default function HandoffMemoTool() {
                 setSourceLogText(event.target.value);
               }}
               className="mt-2 min-h-[600px] w-full resize-y rounded-md border border-stone-300 bg-[#111827] p-4 font-mono text-sm leading-6 text-stone-50 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
-              placeholder={activeOutputTab === "yaml" ? "生成された知識メモがここに表示されます" : "生成された会話ログがここに表示されます"}
+              placeholder={activeOutputTab === "yaml" ? t.yamlOutputPlaceholder : t.sourceOutputPlaceholder}
               spellCheck={false}
             />
           </div>
