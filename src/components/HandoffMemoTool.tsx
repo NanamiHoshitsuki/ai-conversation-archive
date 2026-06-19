@@ -186,6 +186,41 @@ function buildBookmarkMetadata(sourceInfo: SourceInfo) {
   };
 }
 
+function getStringField(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function extractSourceInfoFromYaml(yamlText: string) {
+  try {
+    const parsed = yaml.load(yamlText);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const parsedRecord = parsed as Record<string, unknown>;
+    const source =
+      parsedRecord.source && typeof parsedRecord.source === "object" && !Array.isArray(parsedRecord.source)
+        ? (parsedRecord.source as Record<string, unknown>)
+        : {};
+    const bookmark =
+      parsedRecord.bookmark && typeof parsedRecord.bookmark === "object" && !Array.isArray(parsedRecord.bookmark)
+        ? (parsedRecord.bookmark as Record<string, unknown>)
+        : {};
+    const extracted: Partial<SourceInfo> = {};
+    const platform = getStringField(source.platform);
+    const savedAt = getStringField(source.saved_at);
+    const conversationTitle = getStringField(source.conversation_title) || getStringField(source.title);
+    const conversationUrl = getStringField(source.conversation_url);
+    const bookmarkText = getStringField(bookmark.summary) || getStringField(source.user_note);
+
+    if (platform) extracted.platform = platform;
+    if (savedAt) extracted.savedAt = savedAt;
+    if (conversationTitle) extracted.conversationTitle = conversationTitle;
+    if (conversationUrl) extracted.conversationUrl = conversationUrl;
+    if (bookmarkText) extracted.bookmark = bookmarkText;
+    return extracted;
+  } catch {
+    return {};
+  }
+}
+
 function getFilenameDate(sourceInfo: SourceInfo) {
   const match = sourceInfo.savedAt.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!match) return new Date();
@@ -384,6 +419,13 @@ export default function HandoffMemoTool() {
       ...current,
       [field]: value,
     }));
+    if (yamlText.trim()) {
+      const nextSourceInfo = {
+        ...sourceInfo,
+        [field]: value,
+      };
+      setYamlText(mergeSourceMetadataIntoYaml(yamlText, nextSourceInfo));
+    }
   }
 
   useEffect(() => {
@@ -537,7 +579,14 @@ export default function HandoffMemoTool() {
         setStatus("読み込む知識メモを貼り付けてください。");
         return;
       }
+      const extractedSourceInfo = extractSourceInfoFromYaml(yamlText);
+      const nextSourceInfo = {
+        ...sourceInfo,
+        ...extractedSourceInfo,
+      };
       setMemo(null);
+      setSourceInfo(nextSourceInfo);
+      setYamlText(mergeSourceMetadataIntoYaml(yamlText, nextSourceInfo));
       setActiveOutputTab("yaml");
       setStatus("知識メモを読み込みました。");
       return;
