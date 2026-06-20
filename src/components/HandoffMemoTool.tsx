@@ -66,6 +66,11 @@ type PreparedTextFile = {
   mimeType: string;
 };
 
+type SaveToast = {
+  title: string;
+  filenames: string[];
+};
+
 const DIRECTORY_DB_NAME = "ai-conversation-archive";
 const DIRECTORY_STORE_NAME = "settings";
 const DIRECTORY_HANDLE_KEY = "directoryHandle";
@@ -134,6 +139,8 @@ const UI_TEXT = {
     alsoSaveLog: "会話ログも保存する",
     downloadLog: "会話ログをダウンロード",
     downloadBoth: "両方ダウンロード",
+    saving: "保存中...",
+    savedToastTitle: "✓ 保存しました",
     savedBothToFolder: (monthFolder: string, yamlFilename: string, sourceFilename: string) =>
       `${monthFolder}/${yamlFilename} と ${monthFolder}/${sourceFilename} に保存しました。`,
     destination: "保存先",
@@ -233,6 +240,8 @@ AIとの会話を後で見返せる知識資産として残したい。
     alsoSaveLog: "Also save conversation log",
     downloadLog: "Download Conversation Log",
     downloadBoth: "Download Both",
+    saving: "Saving...",
+    savedToastTitle: "✓ Saved",
     savedBothToFolder: (monthFolder: string, yamlFilename: string, sourceFilename: string) =>
       `Saved to ${monthFolder}/${yamlFilename} and ${monthFolder}/${sourceFilename}.`,
     destination: "Save Destination",
@@ -706,6 +715,8 @@ export default function HandoffMemoTool() {
     return typeof window.showDirectoryPicker === "function";
   });
   const [status, setStatus] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveToast, setSaveToast] = useState<SaveToast | null>(null);
   const [autoDownload, setAutoDownload] = useState(false);
   const [saveSourceLog, setSaveSourceLog] = useState(true);
   const [sourceLogText, setSourceLogText] = useState("");
@@ -747,6 +758,24 @@ export default function HandoffMemoTool() {
     setActiveOutputTab(tab === "log-save" ? "source" : "yaml");
   }
 
+  function showSaveToast(files: PreparedTextFile[]) {
+    setSaveToast({
+      title: t.savedToastTitle,
+      filenames: files.map((file) => file.filename),
+    });
+  }
+
+  async function beginSaveAction() {
+    setIsSaving(true);
+    setSaveToast(null);
+    setStatus(t.saving);
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+  }
+
+  function finishSaveAction() {
+    setIsSaving(false);
+  }
+
   function updateSourceInfo(field: keyof SourceInfo, value: string) {
     setSourceInfo((current) => ({
       ...current,
@@ -773,6 +802,12 @@ export default function HandoffMemoTool() {
   useEffect(() => {
     window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
   }, [language]);
+
+  useEffect(() => {
+    if (!saveToast) return;
+    const timeout = window.setTimeout(() => setSaveToast(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [saveToast]);
 
   useEffect(() => {
     let isMounted = true;
@@ -957,72 +992,81 @@ export default function HandoffMemoTool() {
   }
 
   async function saveSourceLogFile() {
+    if (isSaving) return;
     if (!sourceLogText.trim()) {
       setStatus(t.emptyContent);
       return;
     }
 
-    let markdownFile: PreparedTextFile;
+    await beginSaveAction();
     try {
-      markdownFile = buildMarkdownFile(sourceLogText, sourceInfo);
-    } catch {
-      setStatus(t.emptyContent);
-      return;
-    }
-
-    const monthFolder = formatSourceTimestamp(getFilenameDate(sourceInfo)).slice(0, 7);
-    if (directoryHandle) {
+      let markdownFile: PreparedTextFile;
       try {
-        if (!(await ensureDirectoryPermission(directoryHandle))) {
-          downloadPreparedFiles([markdownFile]);
-          setSourceLogText(markdownFile.content);
-          setSourceLogFilename(markdownFile.filename);
-          setStatus(`${t.folderPermissionDenied}\n\n${t.folderDownloadFallback}`);
-          return;
-        }
-        const isEmptyFile = await saveTextFileToDirectory(
-          directoryHandle,
-          markdownFile.filename,
-          markdownFile.content,
-          monthFolder,
-          markdownFile.mimeType,
-        );
-        if (isEmptyFile) {
-          downloadPreparedFiles([markdownFile]);
-          setSourceLogText(markdownFile.content);
-          setSourceLogFilename(markdownFile.filename);
-          setStatus(`${t.zeroByteWarning}\n\n${t.folderDownloadFallback}`);
-          return;
-        }
-        setSourceLogText(markdownFile.content);
-        setSourceLogFilename(markdownFile.filename);
-        setStatus(t.savedTo(`${monthFolder}/${markdownFile.filename}`));
-        return;
+        markdownFile = buildMarkdownFile(sourceLogText, sourceInfo);
       } catch {
-        try {
-          downloadPreparedFiles([markdownFile]);
-          setSourceLogText(markdownFile.content);
-          setSourceLogFilename(markdownFile.filename);
-          setStatus(`${t.folderSaveFailure}\n\n${t.folderDownloadFallback}`);
-        } catch {
-          setStatus(t.folderSaveFailure);
-        }
+        setStatus(t.emptyContent);
         return;
       }
-    }
 
-    try {
-      downloadTextFile(markdownFile.filename, markdownFile.content, markdownFile.mimeType);
-    } catch {
-      setStatus(t.emptyContent);
-      return;
+      const monthFolder = formatSourceTimestamp(getFilenameDate(sourceInfo)).slice(0, 7);
+      if (directoryHandle) {
+        try {
+          if (!(await ensureDirectoryPermission(directoryHandle))) {
+            downloadPreparedFiles([markdownFile]);
+            setSourceLogText(markdownFile.content);
+            setSourceLogFilename(markdownFile.filename);
+            setStatus(`${t.folderPermissionDenied}\n\n${t.folderDownloadFallback}`);
+            return;
+          }
+          const isEmptyFile = await saveTextFileToDirectory(
+            directoryHandle,
+            markdownFile.filename,
+            markdownFile.content,
+            monthFolder,
+            markdownFile.mimeType,
+          );
+          if (isEmptyFile) {
+            downloadPreparedFiles([markdownFile]);
+            setSourceLogText(markdownFile.content);
+            setSourceLogFilename(markdownFile.filename);
+            setStatus(`${t.zeroByteWarning}\n\n${t.folderDownloadFallback}`);
+            return;
+          }
+          setSourceLogText(markdownFile.content);
+          setSourceLogFilename(markdownFile.filename);
+          setStatus(t.savedTo(`${monthFolder}/${markdownFile.filename}`));
+          showSaveToast([markdownFile]);
+          return;
+        } catch {
+          try {
+            downloadPreparedFiles([markdownFile]);
+            setSourceLogText(markdownFile.content);
+            setSourceLogFilename(markdownFile.filename);
+            setStatus(`${t.folderSaveFailure}\n\n${t.folderDownloadFallback}`);
+          } catch {
+            setStatus(t.folderSaveFailure);
+          }
+          return;
+        }
+      }
+
+      try {
+        downloadTextFile(markdownFile.filename, markdownFile.content, markdownFile.mimeType);
+      } catch {
+        setStatus(t.emptyContent);
+        return;
+      }
+      setSourceLogText(markdownFile.content);
+      setSourceLogFilename(markdownFile.filename);
+      setStatus(t.logDownloaded);
+      showSaveToast([markdownFile]);
+    } finally {
+      finishSaveAction();
     }
-    setSourceLogText(markdownFile.content);
-    setSourceLogFilename(markdownFile.filename);
-    setStatus(t.logDownloaded);
   }
 
   async function save() {
+    if (isSaving) return;
     if (activeInputTab === "log-save" && !yamlText.trim()) {
       await saveSourceLogFile();
       return;
@@ -1033,136 +1077,146 @@ export default function HandoffMemoTool() {
       return;
     }
 
-    let nextMemo = activeInputTab === "memo-save" ? null : memo;
-    let nextYaml = yamlText;
-    let nextSourceLogText = sourceLogText;
-    const isPastedYaml = activeInputTab === "memo-save";
-
-    if (!nextYaml.trim()) {
-      if (isPastedYaml) {
-        setStatus(t.emptyContent);
-        return;
-      }
-      if (!conversationLog.trim()) {
-        setStatus(t.emptyContent);
-        return;
-      }
-      const generated = buildBulkMemo(conversationLog.trim());
-      nextMemo = generated.nextMemo;
-      nextYaml = generated.nextYaml;
-      nextSourceLogText = generated.nextSourceLog;
-      setSourceLogText(generated.nextSourceLog);
-      setSourceLogFilename(generated.nextSourceLog ? getSourceLogDownloadFilename(nextYaml) : "");
-      setMemo(nextMemo);
-      setYamlText(nextYaml);
-    }
-
-    let yamlFile: PreparedTextFile;
-    let markdownFile: PreparedTextFile | null = null;
+    await beginSaveAction();
     try {
-      yamlFile = buildYamlFile(nextYaml, sourceInfo);
-      if (nextSourceLogText.trim()) {
-        markdownFile = buildMarkdownFile(nextSourceLogText, sourceInfo, yamlFile.content);
-      }
-    } catch {
-      setStatus(t.emptyContent);
-      return;
-    }
+      let nextMemo = activeInputTab === "memo-save" ? null : memo;
+      let nextYaml = yamlText;
+      let nextSourceLogText = sourceLogText;
+      const isPastedYaml = activeInputTab === "memo-save";
 
-    if (directoryHandle) {
+      if (!nextYaml.trim()) {
+        if (isPastedYaml) {
+          setStatus(t.emptyContent);
+          return;
+        }
+        if (!conversationLog.trim()) {
+          setStatus(t.emptyContent);
+          return;
+        }
+        const generated = buildBulkMemo(conversationLog.trim());
+        nextMemo = generated.nextMemo;
+        nextYaml = generated.nextYaml;
+        nextSourceLogText = generated.nextSourceLog;
+        setSourceLogText(generated.nextSourceLog);
+        setSourceLogFilename(generated.nextSourceLog ? getSourceLogDownloadFilename(nextYaml) : "");
+        setMemo(nextMemo);
+        setYamlText(nextYaml);
+      }
+
+      let yamlFile: PreparedTextFile;
+      let markdownFile: PreparedTextFile | null = null;
       try {
-        if (!(await ensureDirectoryPermission(directoryHandle))) {
-          downloadPreparedFiles(markdownFile ? [yamlFile, markdownFile] : [yamlFile]);
-          setYamlText(yamlFile.content);
-          if (markdownFile) {
-            setSourceLogText(markdownFile.content);
-            setSourceLogFilename(markdownFile.filename);
-          }
-          setStatus(`${t.folderPermissionDenied}\n\n${t.folderDownloadFallback}`);
-          return;
+        yamlFile = buildYamlFile(nextYaml, sourceInfo);
+        if (nextSourceLogText.trim()) {
+          markdownFile = buildMarkdownFile(nextSourceLogText, sourceInfo, yamlFile.content);
         }
-        const monthFolder = nextMemo ? getMemoMonthFolder(nextMemo) : formatMarkdownTimestamp().slice(0, 7);
-        const isEmptyFile = await saveTextFileToDirectory(
-          directoryHandle,
-          yamlFile.filename,
-          yamlFile.content,
-          monthFolder,
-          yamlFile.mimeType,
-        );
-        if (isEmptyFile) {
-          setYamlText(yamlFile.content);
-          downloadPreparedFiles(markdownFile ? [yamlFile, markdownFile] : [yamlFile]);
-          if (markdownFile) {
-            setSourceLogText(markdownFile.content);
-            setSourceLogFilename(markdownFile.filename);
+      } catch {
+        setStatus(t.emptyContent);
+        return;
+      }
+
+      if (directoryHandle) {
+        try {
+          if (!(await ensureDirectoryPermission(directoryHandle))) {
+            downloadPreparedFiles(markdownFile ? [yamlFile, markdownFile] : [yamlFile]);
+            setYamlText(yamlFile.content);
+            if (markdownFile) {
+              setSourceLogText(markdownFile.content);
+              setSourceLogFilename(markdownFile.filename);
+            }
+            setStatus(`${t.folderPermissionDenied}\n\n${t.folderDownloadFallback}`);
+            return;
           }
-          setStatus(`${t.zeroByteWarning}\n\n${t.folderDownloadFallback}`);
-          return;
-        }
-        setYamlText(yamlFile.content);
-        if (markdownFile) {
-          const isSourceEmptyFile = await saveTextFileToDirectory(
+          const monthFolder = nextMemo ? getMemoMonthFolder(nextMemo) : formatMarkdownTimestamp().slice(0, 7);
+          const isEmptyFile = await saveTextFileToDirectory(
             directoryHandle,
-            markdownFile.filename,
-            markdownFile.content,
+            yamlFile.filename,
+            yamlFile.content,
             monthFolder,
-            markdownFile.mimeType,
+            yamlFile.mimeType,
           );
-          if (isSourceEmptyFile) {
-            downloadPreparedFiles([yamlFile, markdownFile]);
-            setSourceLogText(markdownFile.content);
-            setSourceLogFilename(markdownFile.filename);
+          if (isEmptyFile) {
+            setYamlText(yamlFile.content);
+            downloadPreparedFiles(markdownFile ? [yamlFile, markdownFile] : [yamlFile]);
+            if (markdownFile) {
+              setSourceLogText(markdownFile.content);
+              setSourceLogFilename(markdownFile.filename);
+            }
             setStatus(`${t.zeroByteWarning}\n\n${t.folderDownloadFallback}`);
             return;
           }
-          setSourceLogText(markdownFile.content);
-          setSourceLogFilename(markdownFile.filename);
-          setStatus(t.savedBothToFolder(monthFolder, yamlFile.filename, markdownFile.filename));
-          return;
-        }
-        setStatus(t.savedTo(`${monthFolder}/${yamlFile.filename}`));
-        return;
-      } catch {
-        try {
-          downloadPreparedFiles(markdownFile ? [yamlFile, markdownFile] : [yamlFile]);
           setYamlText(yamlFile.content);
           if (markdownFile) {
+            const isSourceEmptyFile = await saveTextFileToDirectory(
+              directoryHandle,
+              markdownFile.filename,
+              markdownFile.content,
+              monthFolder,
+              markdownFile.mimeType,
+            );
+            if (isSourceEmptyFile) {
+              downloadPreparedFiles([yamlFile, markdownFile]);
+              setSourceLogText(markdownFile.content);
+              setSourceLogFilename(markdownFile.filename);
+              setStatus(`${t.zeroByteWarning}\n\n${t.folderDownloadFallback}`);
+              return;
+            }
             setSourceLogText(markdownFile.content);
             setSourceLogFilename(markdownFile.filename);
+            setStatus(t.savedBothToFolder(monthFolder, yamlFile.filename, markdownFile.filename));
+            showSaveToast([yamlFile, markdownFile]);
+            return;
           }
-          setStatus(`${t.folderSaveFailure}\n\n${t.folderDownloadFallback}`);
+          setStatus(t.savedTo(`${monthFolder}/${yamlFile.filename}`));
+          showSaveToast([yamlFile]);
+          return;
         } catch {
-          setStatus(t.folderSaveFailure);
+          try {
+            downloadPreparedFiles(markdownFile ? [yamlFile, markdownFile] : [yamlFile]);
+            setYamlText(yamlFile.content);
+            if (markdownFile) {
+              setSourceLogText(markdownFile.content);
+              setSourceLogFilename(markdownFile.filename);
+            }
+            setStatus(`${t.folderSaveFailure}\n\n${t.folderDownloadFallback}`);
+          } catch {
+            setStatus(t.folderSaveFailure);
+          }
+          return;
         }
-        return;
       }
-    }
 
-    setYamlText(yamlFile.content);
-    try {
-      downloadTextFile(yamlFile.filename, yamlFile.content, yamlFile.mimeType);
-    } catch {
-      setStatus(t.emptyContent);
-      return;
-    }
-    if (markdownFile) {
-      setSourceLogText(markdownFile.content);
-      setSourceLogFilename(markdownFile.filename);
+      setYamlText(yamlFile.content);
       try {
-        downloadTextFile(markdownFile.filename, markdownFile.content, markdownFile.mimeType);
+        downloadTextFile(yamlFile.filename, yamlFile.content, yamlFile.mimeType);
       } catch {
         setStatus(t.emptyContent);
         return;
       }
-      setStatus(t.bothDownloaded);
-      return;
+      if (markdownFile) {
+        setSourceLogText(markdownFile.content);
+        setSourceLogFilename(markdownFile.filename);
+        try {
+          downloadTextFile(markdownFile.filename, markdownFile.content, markdownFile.mimeType);
+        } catch {
+          setStatus(t.emptyContent);
+          return;
+        }
+        setStatus(t.bothDownloaded);
+        showSaveToast([yamlFile, markdownFile]);
+        return;
+      }
+      setStatus(t.memoDownloaded);
+      showSaveToast([yamlFile]);
+    } finally {
+      finishSaveAction();
     }
-    setStatus(t.memoDownloaded);
   }
 
-  function download() {
+  async function download() {
+    if (isSaving) return;
     if (activeInputTab === "log-save") {
-      downloadSourceLog();
+      await downloadSourceLog();
       return;
     }
 
@@ -1170,55 +1224,36 @@ export default function HandoffMemoTool() {
       setStatus(t.createOrPasteFirst);
       return;
     }
-    let yamlFile: PreparedTextFile;
+    await beginSaveAction();
     try {
-      yamlFile = buildYamlFile(yamlText, sourceInfo);
-      downloadTextFile(yamlFile.filename, yamlFile.content, yamlFile.mimeType);
-    } catch {
-      setStatus(t.emptyContent);
-      return;
+      let yamlFile: PreparedTextFile;
+      try {
+        yamlFile = buildYamlFile(yamlText, sourceInfo);
+        downloadTextFile(yamlFile.filename, yamlFile.content, yamlFile.mimeType);
+      } catch {
+        setStatus(t.emptyContent);
+        return;
+      }
+      setYamlText(yamlFile.content);
+      setStatus(t.memoDownloaded);
+      showSaveToast([yamlFile]);
+    } finally {
+      finishSaveAction();
     }
-    setYamlText(yamlFile.content);
-    setStatus(t.memoDownloaded);
   }
 
-  function downloadSourceLog() {
+  async function downloadSourceLog() {
+    if (isSaving) return;
     if (!sourceLogText) {
       setStatus(t.noLog);
       return;
     }
-    let markdownFile: PreparedTextFile;
+    await beginSaveAction();
     try {
-      const yamlContent = yamlText.trim() ? buildYamlContent(yamlText, sourceInfo) : "";
-      markdownFile = buildMarkdownFile(sourceLogText, sourceInfo, yamlContent);
-      downloadTextFile(markdownFile.filename, markdownFile.content, markdownFile.mimeType);
-    } catch {
-      setStatus(t.emptyContent);
-      return;
-    }
-    setSourceLogText(markdownFile.content);
-    setSourceLogFilename(markdownFile.filename);
-    setStatus(t.logDownloaded);
-  }
-
-  function downloadBoth() {
-    if (!yamlText) {
-      setStatus(t.createOrPasteFirst);
-      return;
-    }
-    let yamlFile: PreparedTextFile;
-    try {
-      yamlFile = buildYamlFile(yamlText, sourceInfo);
-      downloadTextFile(yamlFile.filename, yamlFile.content, yamlFile.mimeType);
-    } catch {
-      setStatus(t.emptyContent);
-      return;
-    }
-    setYamlText(yamlFile.content);
-    if (sourceLogText.trim()) {
       let markdownFile: PreparedTextFile;
       try {
-        markdownFile = buildMarkdownFile(sourceLogText, sourceInfo, yamlFile.content);
+        const yamlContent = yamlText.trim() ? buildYamlContent(yamlText, sourceInfo) : "";
+        markdownFile = buildMarkdownFile(sourceLogText, sourceInfo, yamlContent);
         downloadTextFile(markdownFile.filename, markdownFile.content, markdownFile.mimeType);
       } catch {
         setStatus(t.emptyContent);
@@ -1226,10 +1261,50 @@ export default function HandoffMemoTool() {
       }
       setSourceLogText(markdownFile.content);
       setSourceLogFilename(markdownFile.filename);
-      setStatus(t.bothDownloaded);
+      setStatus(t.logDownloaded);
+      showSaveToast([markdownFile]);
+    } finally {
+      finishSaveAction();
+    }
+  }
+
+  async function downloadBoth() {
+    if (isSaving) return;
+    if (!yamlText) {
+      setStatus(t.createOrPasteFirst);
       return;
     }
-    setStatus(t.memoDownloadedNoLog);
+    await beginSaveAction();
+    try {
+      let yamlFile: PreparedTextFile;
+      try {
+        yamlFile = buildYamlFile(yamlText, sourceInfo);
+        downloadTextFile(yamlFile.filename, yamlFile.content, yamlFile.mimeType);
+      } catch {
+        setStatus(t.emptyContent);
+        return;
+      }
+      setYamlText(yamlFile.content);
+      if (sourceLogText.trim()) {
+        let markdownFile: PreparedTextFile;
+        try {
+          markdownFile = buildMarkdownFile(sourceLogText, sourceInfo, yamlFile.content);
+          downloadTextFile(markdownFile.filename, markdownFile.content, markdownFile.mimeType);
+        } catch {
+          setStatus(t.emptyContent);
+          return;
+        }
+        setSourceLogText(markdownFile.content);
+        setSourceLogFilename(markdownFile.filename);
+        setStatus(t.bothDownloaded);
+        showSaveToast([yamlFile, markdownFile]);
+        return;
+      }
+      setStatus(t.memoDownloadedNoLog);
+      showSaveToast([yamlFile]);
+    } finally {
+      finishSaveAction();
+    }
   }
 
   async function copyShioriPrompt(promptText = activePrompt, promptLabel = activePromptLabel) {
@@ -1256,6 +1331,18 @@ export default function HandoffMemoTool() {
 
   return (
     <div className="min-h-screen bg-[#f7f5ef] text-stone-950">
+      {saveToast && (
+        <div className="fixed right-4 top-4 z-50 max-w-[calc(100vw-2rem)] rounded-md border border-teal-200 bg-white px-4 py-3 text-sm shadow-lg sm:max-w-md">
+          <p className="font-bold text-teal-700">{saveToast.title}</p>
+          <ul className="mt-2 space-y-1 text-stone-700">
+            {saveToast.filenames.map((filename) => (
+              <li key={filename} className="break-words">
+                - {filename}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <header className="border-b border-stone-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
           <div>
@@ -1543,7 +1630,8 @@ export default function HandoffMemoTool() {
                   <button
                     type="button"
                     onClick={chooseDirectory}
-                    className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
+                    disabled={isSaving}
+                    className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:text-stone-400"
                   >
                     {t.chooseFolder}
                   </button>
@@ -1551,10 +1639,10 @@ export default function HandoffMemoTool() {
                     <button
                       type="button"
                       onClick={save}
-                      disabled={!directoryHandle}
+                      disabled={!directoryHandle || isSaving}
                       className="h-11 rounded-md bg-stone-950 px-5 text-sm font-bold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
                     >
-                      {t.saveToFolder}
+                      {isSaving ? t.saving : t.saveToFolder}
                     </button>
                     <p className="mt-1 text-xs font-medium text-stone-500">{t.saveToFolderHelp}</p>
                   </div>
@@ -1568,9 +1656,10 @@ export default function HandoffMemoTool() {
                 <button
                   type="button"
                   onClick={download}
-                  className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
+                  disabled={isSaving}
+                  className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:text-stone-400"
                 >
-                  {t.download}
+                  {isSaving ? t.saving : t.download}
                 </button>
                 <p className="mt-1 text-xs font-medium text-stone-500">{t.downloadHelp}</p>
               </div>
@@ -1601,9 +1690,10 @@ export default function HandoffMemoTool() {
                   <button
                     type="button"
                     onClick={downloadSourceLog}
-                    className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
+                    disabled={isSaving}
+                    className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:text-stone-400"
                   >
-                    {t.downloadLog}
+                    {isSaving ? t.saving : t.downloadLog}
                   </button>
                 </>
               )}
@@ -1612,9 +1702,10 @@ export default function HandoffMemoTool() {
                   <button
                     type="button"
                     onClick={downloadBoth}
-                    className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50"
+                    disabled={isSaving}
+                    className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:text-stone-400"
                   >
-                    {t.downloadBoth}
+                    {isSaving ? t.saving : t.downloadBoth}
                   </button>
                 </>
               )}
