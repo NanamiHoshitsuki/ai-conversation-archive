@@ -288,12 +288,13 @@ export function buildConversationTitleFilename(conversationTitle: string, date =
 export function stripArchiveFilenameExtension(filename: string) {
   return filename
     .trim()
+    .replace(/\.zip$/i, "")
     .replace(/\.source\.md$/i, "")
     .replace(/\.ya?ml$/i, "")
     .replace(/\.md$/i, "");
 }
 
-export function buildArchiveFilename(baseFilename: string, extension: ".yaml" | ".source.md", fallbackDate = new Date()) {
+export function buildArchiveFilename(baseFilename: string, extension: ".yaml" | ".source.md" | ".zip", fallbackDate = new Date()) {
   const base = stripArchiveFilenameExtension(baseFilename);
   const fallbackBase = stripArchiveFilenameExtension(getFallbackMemoFilename(fallbackDate));
   return `${base || fallbackBase}${extension}`;

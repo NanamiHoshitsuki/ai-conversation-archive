@@ -12,7 +12,6 @@ import {
   buildArchiveFilename,
   buildConversationTitleFilename,
   generateHandoffMemo,
-  getMemoMonthFolder,
   getSourceLogDownloadFilename,
   getSourceLogFilenameFromYamlFilename,
   stripArchiveFilenameExtension,
@@ -64,6 +63,11 @@ type PreparedTextFile = {
   filename: string;
   content: string;
   mimeType: string;
+};
+
+type PreparedBlobFile = {
+  filename: string;
+  blob: Blob;
 };
 
 type SaveToast = {
@@ -133,14 +137,20 @@ const UI_TEXT = {
     chooseFolder: "保存先フォルダを選択",
     saveToFolder: "📁 フォルダに保存",
     saveToFolderHelp: "選択したフォルダへ保存します",
-    download: "⬇️ ダウンロード",
-    downloadHelp: "ブラウザのダウンロードフォルダへ保存します",
+    saveZip: "ZIP保存（推奨）",
+    saveZipHelp: "YAMLとMarkdownを1つのZIPにまとめて保存します",
+    saveYaml: "YAML保存",
+    saveMarkdown: "Markdown保存",
+    download: "YAML保存",
+    downloadHelp: "YAML単体を保存します",
     autoDownload: "作成後に自動ダウンロード",
     alsoSaveLog: "会話ログも保存する",
-    downloadLog: "会話ログをダウンロード",
-    downloadBoth: "両方ダウンロード",
+    downloadLog: "Markdown保存",
+    downloadBoth: "ZIP保存（推奨）",
     saving: "保存中...",
     savedToastTitle: "✓ 保存しました",
+    zipSavedToastTitle: "✓ ZIP保存しました",
+    folderSavedToastTitle: "✓ 2ファイルを保存しました",
     savedBothToFolder: (monthFolder: string, yamlFilename: string, sourceFilename: string) =>
       `${monthFolder}/${yamlFilename} と ${monthFolder}/${sourceFilename} に保存しました。`,
     destination: "保存先",
@@ -169,6 +179,8 @@ const UI_TEXT = {
     pasteLogToUpdate: "読み込む会話ログを貼り付けてください。",
     pasteLogToCreate: "会話ログを貼り付けてください。",
     folderUnsupported: "このブラウザではフォルダ保存に未対応です。ダウンロード保存を使ってください。",
+    folderMobileHidden: "スマホではフォルダ保存を使わず、ZIP保存を使ってください。",
+    folderSaveFailedFile: (filename: string) => `${filename} のフォルダ保存に失敗しました。`,
     folderChosen: "保存先フォルダを選択し、次回起動用に保存しました。",
     folderCanceled: "フォルダ選択をキャンセルしました。",
     folderRestored: "保存先フォルダを復元しました。",
@@ -182,9 +194,11 @@ const UI_TEXT = {
     logDownloaded: "会話ログをダウンロードしました。",
     memoDownloaded: "知識メモをダウンロードしました。",
     bothDownloaded: "知識メモと会話ログをダウンロードしました。",
+    zipDownloaded: "ZIPを保存しました。",
     memoDownloadedNoLog: "知識メモをダウンロードしました。会話ログはありません。",
     createOrPasteFirst: "先に知識メモを生成または貼り付けてください。",
     noLog: "会話ログがありません。先に会話ログを生成してください。",
+    needYamlAndMarkdown: "ZIP保存にはYAMLとMarkdownの両方が必要です。",
     sampleLog: `ユーザー:
 AIとの会話を後で見返せる知識資産として残したい。
 決定事項と次の行動を上に置きたい。
@@ -234,14 +248,20 @@ AIとの会話を後で見返せる知識資産として残したい。
     chooseFolder: "Choose Save Folder",
     saveToFolder: "📁 Save to Folder",
     saveToFolderHelp: "Save to the selected folder",
-    download: "⬇️ Download",
-    downloadHelp: "Save using the browser download folder",
+    saveZip: "Save ZIP (Recommended)",
+    saveZipHelp: "Save YAML and Markdown together in one ZIP file",
+    saveYaml: "Save YAML",
+    saveMarkdown: "Save Markdown",
+    download: "Save YAML",
+    downloadHelp: "Save only the YAML file",
     autoDownload: "Download automatically after creation",
     alsoSaveLog: "Also save conversation log",
-    downloadLog: "Download Conversation Log",
-    downloadBoth: "Download Both",
+    downloadLog: "Save Markdown",
+    downloadBoth: "Save ZIP (Recommended)",
     saving: "Saving...",
     savedToastTitle: "✓ Saved",
+    zipSavedToastTitle: "✓ ZIP saved",
+    folderSavedToastTitle: "✓ 2 files saved",
     savedBothToFolder: (monthFolder: string, yamlFilename: string, sourceFilename: string) =>
       `Saved to ${monthFolder}/${yamlFilename} and ${monthFolder}/${sourceFilename}.`,
     destination: "Save Destination",
@@ -281,6 +301,8 @@ AIとの会話を後で見返せる知識資産として残したい。
     pasteLogToUpdate: "Paste a conversation log to update.",
     pasteLogToCreate: "Paste content first.",
     folderUnsupported: "This browser does not support folder saving. Use Download instead.",
+    folderMobileHidden: "On mobile, use ZIP saving instead of folder saving.",
+    folderSaveFailedFile: (filename: string) => `Folder save failed for ${filename}.`,
     folderChosen: "Save folder selected and stored for next launch.",
     folderCanceled: "Folder selection was canceled.",
     folderRestored: "Save folder restored.",
@@ -294,9 +316,11 @@ AIとの会話を後で見返せる知識資産として残したい。
     logDownloaded: "Conversation log downloaded.",
     memoDownloaded: "Knowledge memo downloaded.",
     bothDownloaded: "Knowledge memo and conversation log downloaded.",
+    zipDownloaded: "ZIP saved.",
     memoDownloadedNoLog: "Knowledge memo downloaded. No conversation log is available.",
     createOrPasteFirst: "Create or paste a knowledge memo first.",
     noLog: "No conversation log available. Generate one first.",
+    needYamlAndMarkdown: "ZIP saving requires both YAML and Markdown.",
     sampleLog: `User:
 I want to preserve AI conversations as knowledge assets that can be reviewed later.
 I want decisions and next actions near the top.
@@ -307,14 +331,15 @@ The goal is not to save the raw conversation, but to preserve reusable outcomes.
 } as const;
 
 function assertNonEmptyContent(content: string) {
-  if (content.length === 0) {
+  if (content.trim().length === 0) {
     throw new Error("Cannot save empty archive content.");
   }
 }
 
-function downloadTextFile(filename: string, content: string, mimeType = "text/plain;charset=utf-8") {
-  assertNonEmptyContent(content);
-  const blob = new Blob([content], { type: mimeType });
+function downloadBlob(filename: string, blob: Blob) {
+  if (blob.size === 0) {
+    throw new Error("Cannot save empty archive content.");
+  }
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -325,8 +350,15 @@ function downloadTextFile(filename: string, content: string, mimeType = "text/pl
   URL.revokeObjectURL(url);
 }
 
-function downloadYaml(filename: string, yamlText: string) {
-  downloadTextFile(filename, yamlText, "text/yaml;charset=utf-8");
+function downloadTextFile(filename: string, content: string, mimeType = "text/plain;charset=utf-8") {
+  assertNonEmptyContent(content);
+  downloadBlob(filename, new Blob([content], { type: mimeType }));
+}
+
+function downloadPreparedFiles(files: PreparedTextFile[]) {
+  files.forEach((file) => {
+    downloadTextFile(file.filename, file.content, file.mimeType);
+  });
 }
 
 function buildBaseFilename(yamlContent: string, sourceInfo: SourceInfo, fallbackDate = new Date()) {
@@ -335,6 +367,18 @@ function buildBaseFilename(yamlContent: string, sourceInfo: SourceInfo, fallback
     return stripArchiveFilenameExtension(buildConversationTitleFilename(conversationTitle, getFilenameDate(sourceInfo)));
   }
   return stripArchiveFilenameExtension(getYamlDownloadFilename(yamlContent, fallbackDate));
+}
+
+function buildYamlFilename(baseFilename: string) {
+  return buildArchiveFilename(baseFilename, ".yaml");
+}
+
+function buildMarkdownFilename(baseFilename: string) {
+  return buildArchiveFilename(baseFilename, ".source.md");
+}
+
+function buildZipFilename(baseFilename: string) {
+  return buildArchiveFilename(baseFilename, ".zip");
 }
 
 function buildYamlContent(sourceYamlText: string, sourceInfo: SourceInfo) {
@@ -353,7 +397,7 @@ function buildYamlFile(sourceYamlText: string, sourceInfo: SourceInfo): Prepared
   const content = buildYamlContent(sourceYamlText, sourceInfo);
   const baseFilename = buildBaseFilename(content, sourceInfo);
   return {
-    filename: buildArchiveFilename(baseFilename, ".yaml"),
+    filename: buildYamlFilename(baseFilename),
     content,
     mimeType: "text/yaml;charset=utf-8",
   };
@@ -367,16 +411,125 @@ function buildMarkdownFile(sourceMarkdownText: string, sourceInfo: SourceInfo, y
       ? buildBaseFilename(yamlContent, sourceInfo)
       : stripArchiveFilenameExtension(getSourceOnlyDownloadFilename());
   return {
-    filename: buildArchiveFilename(baseFilename, ".source.md"),
+    filename: buildMarkdownFilename(baseFilename),
     content,
     mimeType: "text/markdown;charset=utf-8",
   };
 }
 
-function downloadPreparedFiles(files: PreparedTextFile[]) {
-  files.forEach((file) => {
-    downloadTextFile(file.filename, file.content, file.mimeType);
+function buildZipFile(files: PreparedTextFile[], baseFilename: string): PreparedBlobFile {
+  files.forEach((file) => assertNonEmptyContent(file.content));
+  return {
+    filename: buildZipFilename(baseFilename),
+    blob: createZipBlob(files),
+  };
+}
+
+const CRC32_TABLE = Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  }
+  return value >>> 0;
+});
+
+function crc32(bytes: Uint8Array) {
+  let crc = 0xffffffff;
+  bytes.forEach((byte) => {
+    crc = CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
   });
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function writeUint16(target: number[], value: number) {
+  target.push(value & 0xff, (value >>> 8) & 0xff);
+}
+
+function writeUint32(target: number[], value: number) {
+  target.push(value & 0xff, (value >>> 8) & 0xff, (value >>> 16) & 0xff, (value >>> 24) & 0xff);
+}
+
+function getZipDateTime(date = new Date()) {
+  const time = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const dosDate = ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  return { dosDate, time };
+}
+
+function zipPart(bytes: Uint8Array) {
+  const buffer = bytes.buffer as ArrayBuffer;
+  return buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+}
+
+function createZipBlob(files: PreparedTextFile[]) {
+  const encoder = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  const centralDirectory: Uint8Array[] = [];
+  let offset = 0;
+  const { dosDate, time } = getZipDateTime();
+
+  files.forEach((file) => {
+    const nameBytes = encoder.encode(file.filename);
+    const contentBytes = encoder.encode(file.content);
+    const checksum = crc32(contentBytes);
+    const localHeader: number[] = [];
+
+    writeUint32(localHeader, 0x04034b50);
+    writeUint16(localHeader, 20);
+    writeUint16(localHeader, 0x0800);
+    writeUint16(localHeader, 0);
+    writeUint16(localHeader, time);
+    writeUint16(localHeader, dosDate);
+    writeUint32(localHeader, checksum);
+    writeUint32(localHeader, contentBytes.length);
+    writeUint32(localHeader, contentBytes.length);
+    writeUint16(localHeader, nameBytes.length);
+    writeUint16(localHeader, 0);
+
+    const localChunk = new Uint8Array(localHeader.length + nameBytes.length + contentBytes.length);
+    localChunk.set(localHeader, 0);
+    localChunk.set(nameBytes, localHeader.length);
+    localChunk.set(contentBytes, localHeader.length + nameBytes.length);
+    chunks.push(localChunk);
+
+    const centralHeader: number[] = [];
+    writeUint32(centralHeader, 0x02014b50);
+    writeUint16(centralHeader, 20);
+    writeUint16(centralHeader, 20);
+    writeUint16(centralHeader, 0x0800);
+    writeUint16(centralHeader, 0);
+    writeUint16(centralHeader, time);
+    writeUint16(centralHeader, dosDate);
+    writeUint32(centralHeader, checksum);
+    writeUint32(centralHeader, contentBytes.length);
+    writeUint32(centralHeader, contentBytes.length);
+    writeUint16(centralHeader, nameBytes.length);
+    writeUint16(centralHeader, 0);
+    writeUint16(centralHeader, 0);
+    writeUint16(centralHeader, 0);
+    writeUint16(centralHeader, 0);
+    writeUint32(centralHeader, 0);
+    writeUint32(centralHeader, offset);
+
+    const centralChunk = new Uint8Array(centralHeader.length + nameBytes.length);
+    centralChunk.set(centralHeader, 0);
+    centralChunk.set(nameBytes, centralHeader.length);
+    centralDirectory.push(centralChunk);
+
+    offset += localChunk.length;
+  });
+
+  const centralDirectorySize = centralDirectory.reduce((total, chunk) => total + chunk.length, 0);
+  const endHeader: number[] = [];
+  writeUint32(endHeader, 0x06054b50);
+  writeUint16(endHeader, 0);
+  writeUint16(endHeader, 0);
+  writeUint16(endHeader, files.length);
+  writeUint16(endHeader, files.length);
+  writeUint32(endHeader, centralDirectorySize);
+  writeUint32(endHeader, offset);
+  writeUint16(endHeader, 0);
+
+  return new Blob([...chunks, ...centralDirectory, new Uint8Array(endHeader)].map(zipPart), { type: "application/zip" });
 }
 
 function openDirectoryDatabase() {
@@ -672,6 +825,11 @@ function getSourceOnlyDownloadFilename(date = new Date()) {
   return `${year}-${month}-${day}_source-conversation.source.md`;
 }
 
+function isMobileBrowser() {
+  if (typeof navigator === "undefined") return false;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+}
+
 async function warnIfWrittenFileIsEmpty(fileHandle: { getFile?: () => Promise<File> }) {
   if (!fileHandle.getFile) return false;
   try {
@@ -714,6 +872,7 @@ export default function HandoffMemoTool() {
     if (typeof window === "undefined") return false;
     return typeof window.showDirectoryPicker === "function";
   });
+  const [isMobile] = useState(() => isMobileBrowser());
   const [status, setStatus] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saveToast, setSaveToast] = useState<SaveToast | null>(null);
@@ -742,7 +901,8 @@ export default function HandoffMemoTool() {
       ? currentSourceLogFilename
       : currentYamlFilename || conversationTitleFilename || memo?.filename || t.standby;
   const canDownloadSourceLog = Boolean(sourceLogText.trim());
-  const canDownloadBoth = Boolean(yamlText.trim() && sourceLogText.trim());
+  const canSaveZip = Boolean(conversationLog.trim() || (yamlText.trim() && sourceLogText.trim()));
+  const canUseFolderSave = supportsDirectoryPicker && !isMobile;
   const activePrompt =
     activePromptVariant === "simple"
       ? language === "en"
@@ -763,6 +923,35 @@ export default function HandoffMemoTool() {
       title: t.savedToastTitle,
       filenames: files.map((file) => file.filename),
     });
+  }
+
+  function showBlobSaveToast(file: PreparedBlobFile, title: string = t.savedToastTitle) {
+    setSaveToast({
+      title,
+      filenames: [file.filename],
+    });
+  }
+
+  function getArchiveBaseFilename(yamlContent: string) {
+    return buildBaseFilename(yamlContent, sourceInfo);
+  }
+
+  function prepareYamlFile(sourceYamlText = yamlText) {
+    return buildYamlFile(sourceYamlText, sourceInfo);
+  }
+
+  function prepareMarkdownFile(yamlContent = "", sourceMarkdownText = sourceLogText) {
+    return buildMarkdownFile(sourceMarkdownText, sourceInfo, yamlContent);
+  }
+
+  function prepareArchivePair(sourceYamlText = yamlText, sourceMarkdownText = sourceLogText) {
+    const yamlFile = prepareYamlFile(sourceYamlText);
+    const markdownFile = prepareMarkdownFile(yamlFile.content, sourceMarkdownText);
+    return {
+      yamlFile,
+      markdownFile,
+      baseFilename: getArchiveBaseFilename(yamlFile.content),
+    };
   }
 
   async function beginSaveAction() {
@@ -813,7 +1002,7 @@ export default function HandoffMemoTool() {
     let isMounted = true;
 
     async function restoreDirectory() {
-      if (supportsDirectoryPicker !== true) return;
+      if (!canUseFolderSave) return;
       if (!("indexedDB" in window)) return;
 
       try {
@@ -840,7 +1029,7 @@ export default function HandoffMemoTool() {
     return () => {
       isMounted = false;
     };
-  }, [supportsDirectoryPicker, t.folderRestoreFailed, t.folderRestored, t.folderRestoredNeedsPermission, t.selectedFolder]);
+  }, [canUseFolderSave, t.folderRestoreFailed, t.folderRestored, t.folderRestoredNeedsPermission, t.selectedFolder]);
 
   function finishGeneration(nextMemo: HandoffMemo, nextYaml: string, message: string, nextSourceLog = "") {
     setMemo(nextMemo);
@@ -850,8 +1039,21 @@ export default function HandoffMemoTool() {
     setActiveOutputTab("yaml");
 
     if (autoDownload) {
-      downloadYaml(getYamlDownloadFilename(nextYaml), nextYaml);
-      setStatus(`${message} ${t.autoDownloaded}`);
+      try {
+        const yamlFile = buildYamlFile(nextYaml, sourceInfo);
+        if (nextSourceLog.trim()) {
+          const markdownFile = buildMarkdownFile(nextSourceLog, sourceInfo, yamlFile.content);
+          const zipFile = buildZipFile([yamlFile, markdownFile], buildBaseFilename(yamlFile.content, sourceInfo));
+          downloadBlob(zipFile.filename, zipFile.blob);
+          showBlobSaveToast(zipFile, t.zipSavedToastTitle);
+        } else {
+          downloadTextFile(yamlFile.filename, yamlFile.content, yamlFile.mimeType);
+          showSaveToast([yamlFile]);
+        }
+        setStatus(`${message} ${t.autoDownloaded}`);
+      } catch {
+        setStatus(t.emptyContent);
+      }
       return;
     }
 
@@ -938,8 +1140,8 @@ export default function HandoffMemoTool() {
   }
 
   async function chooseDirectory() {
-    if (supportsDirectoryPicker !== true || !window.showDirectoryPicker) {
-      setStatus(t.folderUnsupported);
+    if (!canUseFolderSave || !window.showDirectoryPicker) {
+      setStatus(isMobile ? t.folderMobileHidden : t.folderUnsupported);
       return;
     }
 
@@ -991,7 +1193,17 @@ export default function HandoffMemoTool() {
     generate();
   }
 
-  async function saveSourceLogFile() {
+  function generateArchiveFromConversation() {
+    if (!conversationLog.trim()) return null;
+    const generated = buildBulkMemo(conversationLog.trim());
+    setMemo(generated.nextMemo);
+    setYamlText(generated.nextYaml);
+    setSourceLogText(generated.nextSourceLog);
+    setSourceLogFilename(generated.nextSourceLog ? getSourceLogDownloadFilename(generated.nextYaml) : "");
+    return generated;
+  }
+
+  async function saveMarkdown() {
     if (isSaving) return;
     if (!sourceLogText.trim()) {
       setStatus(t.emptyContent);
@@ -1065,170 +1277,23 @@ export default function HandoffMemoTool() {
     }
   }
 
-  async function save() {
+  async function saveYaml() {
     if (isSaving) return;
-    if (activeInputTab === "log-save" && !yamlText.trim()) {
-      await saveSourceLogFile();
-      return;
-    }
-
-    if (!yamlText.trim() && !sourceLogText.trim() && (activeInputTab === "memo-save" || !conversationLog.trim())) {
-      setStatus(t.emptyContent);
-      return;
-    }
-
-    await beginSaveAction();
-    try {
-      let nextMemo = activeInputTab === "memo-save" ? null : memo;
-      let nextYaml = yamlText;
-      let nextSourceLogText = sourceLogText;
-      const isPastedYaml = activeInputTab === "memo-save";
-
-      if (!nextYaml.trim()) {
-        if (isPastedYaml) {
-          setStatus(t.emptyContent);
-          return;
-        }
-        if (!conversationLog.trim()) {
-          setStatus(t.emptyContent);
-          return;
-        }
-        const generated = buildBulkMemo(conversationLog.trim());
-        nextMemo = generated.nextMemo;
-        nextYaml = generated.nextYaml;
-        nextSourceLogText = generated.nextSourceLog;
-        setSourceLogText(generated.nextSourceLog);
-        setSourceLogFilename(generated.nextSourceLog ? getSourceLogDownloadFilename(nextYaml) : "");
-        setMemo(nextMemo);
-        setYamlText(nextYaml);
-      }
-
-      let yamlFile: PreparedTextFile;
-      let markdownFile: PreparedTextFile | null = null;
-      try {
-        yamlFile = buildYamlFile(nextYaml, sourceInfo);
-        if (nextSourceLogText.trim()) {
-          markdownFile = buildMarkdownFile(nextSourceLogText, sourceInfo, yamlFile.content);
-        }
-      } catch {
-        setStatus(t.emptyContent);
-        return;
-      }
-
-      if (directoryHandle) {
-        try {
-          if (!(await ensureDirectoryPermission(directoryHandle))) {
-            downloadPreparedFiles(markdownFile ? [yamlFile, markdownFile] : [yamlFile]);
-            setYamlText(yamlFile.content);
-            if (markdownFile) {
-              setSourceLogText(markdownFile.content);
-              setSourceLogFilename(markdownFile.filename);
-            }
-            setStatus(`${t.folderPermissionDenied}\n\n${t.folderDownloadFallback}`);
-            return;
-          }
-          const monthFolder = nextMemo ? getMemoMonthFolder(nextMemo) : formatMarkdownTimestamp().slice(0, 7);
-          const isEmptyFile = await saveTextFileToDirectory(
-            directoryHandle,
-            yamlFile.filename,
-            yamlFile.content,
-            monthFolder,
-            yamlFile.mimeType,
-          );
-          if (isEmptyFile) {
-            setYamlText(yamlFile.content);
-            downloadPreparedFiles(markdownFile ? [yamlFile, markdownFile] : [yamlFile]);
-            if (markdownFile) {
-              setSourceLogText(markdownFile.content);
-              setSourceLogFilename(markdownFile.filename);
-            }
-            setStatus(`${t.zeroByteWarning}\n\n${t.folderDownloadFallback}`);
-            return;
-          }
-          setYamlText(yamlFile.content);
-          if (markdownFile) {
-            const isSourceEmptyFile = await saveTextFileToDirectory(
-              directoryHandle,
-              markdownFile.filename,
-              markdownFile.content,
-              monthFolder,
-              markdownFile.mimeType,
-            );
-            if (isSourceEmptyFile) {
-              downloadPreparedFiles([yamlFile, markdownFile]);
-              setSourceLogText(markdownFile.content);
-              setSourceLogFilename(markdownFile.filename);
-              setStatus(`${t.zeroByteWarning}\n\n${t.folderDownloadFallback}`);
-              return;
-            }
-            setSourceLogText(markdownFile.content);
-            setSourceLogFilename(markdownFile.filename);
-            setStatus(t.savedBothToFolder(monthFolder, yamlFile.filename, markdownFile.filename));
-            showSaveToast([yamlFile, markdownFile]);
-            return;
-          }
-          setStatus(t.savedTo(`${monthFolder}/${yamlFile.filename}`));
-          showSaveToast([yamlFile]);
-          return;
-        } catch {
-          try {
-            downloadPreparedFiles(markdownFile ? [yamlFile, markdownFile] : [yamlFile]);
-            setYamlText(yamlFile.content);
-            if (markdownFile) {
-              setSourceLogText(markdownFile.content);
-              setSourceLogFilename(markdownFile.filename);
-            }
-            setStatus(`${t.folderSaveFailure}\n\n${t.folderDownloadFallback}`);
-          } catch {
-            setStatus(t.folderSaveFailure);
-          }
-          return;
-        }
-      }
-
-      setYamlText(yamlFile.content);
-      try {
-        downloadTextFile(yamlFile.filename, yamlFile.content, yamlFile.mimeType);
-      } catch {
-        setStatus(t.emptyContent);
-        return;
-      }
-      if (markdownFile) {
-        setSourceLogText(markdownFile.content);
-        setSourceLogFilename(markdownFile.filename);
-        try {
-          downloadTextFile(markdownFile.filename, markdownFile.content, markdownFile.mimeType);
-        } catch {
-          setStatus(t.emptyContent);
-          return;
-        }
-        setStatus(t.bothDownloaded);
-        showSaveToast([yamlFile, markdownFile]);
-        return;
-      }
-      setStatus(t.memoDownloaded);
-      showSaveToast([yamlFile]);
-    } finally {
-      finishSaveAction();
-    }
-  }
-
-  async function download() {
-    if (isSaving) return;
-    if (activeInputTab === "log-save") {
-      await downloadSourceLog();
-      return;
-    }
-
-    if (!yamlText) {
+    if (!yamlText.trim() && !conversationLog.trim()) {
       setStatus(t.createOrPasteFirst);
       return;
     }
+
     await beginSaveAction();
     try {
+      const sourceYamlText = yamlText.trim() ? yamlText : generateArchiveFromConversation()?.nextYaml;
+      if (!sourceYamlText) {
+        setStatus(t.emptyContent);
+        return;
+      }
       let yamlFile: PreparedTextFile;
       try {
-        yamlFile = buildYamlFile(yamlText, sourceInfo);
+        yamlFile = prepareYamlFile(sourceYamlText);
         downloadTextFile(yamlFile.filename, yamlFile.content, yamlFile.mimeType);
       } catch {
         setStatus(t.emptyContent);
@@ -1242,66 +1307,120 @@ export default function HandoffMemoTool() {
     }
   }
 
-  async function downloadSourceLog() {
+  async function saveZip() {
     if (isSaving) return;
-    if (!sourceLogText) {
-      setStatus(t.noLog);
+    if (!yamlText.trim() && !conversationLog.trim()) {
+      setStatus(t.createOrPasteFirst);
       return;
     }
+
     await beginSaveAction();
     try {
+      const generated = !yamlText.trim() ? generateArchiveFromConversation() : null;
+      const sourceYamlText = yamlText.trim() ? yamlText : generated?.nextYaml;
+      const sourceMarkdownText = sourceLogText.trim() ? sourceLogText : generated?.nextSourceLog;
+      if (!sourceYamlText || !sourceMarkdownText) {
+        setStatus(t.needYamlAndMarkdown);
+        return;
+      }
+
+      let yamlFile: PreparedTextFile;
       let markdownFile: PreparedTextFile;
+      let zipFile: PreparedBlobFile;
       try {
-        const yamlContent = yamlText.trim() ? buildYamlContent(yamlText, sourceInfo) : "";
-        markdownFile = buildMarkdownFile(sourceLogText, sourceInfo, yamlContent);
-        downloadTextFile(markdownFile.filename, markdownFile.content, markdownFile.mimeType);
+        const prepared = prepareArchivePair(sourceYamlText, sourceMarkdownText);
+        yamlFile = prepared.yamlFile;
+        markdownFile = prepared.markdownFile;
+        zipFile = buildZipFile([yamlFile, markdownFile], prepared.baseFilename);
+        downloadBlob(zipFile.filename, zipFile.blob);
       } catch {
         setStatus(t.emptyContent);
         return;
       }
+
+      setYamlText(yamlFile.content);
       setSourceLogText(markdownFile.content);
       setSourceLogFilename(markdownFile.filename);
-      setStatus(t.logDownloaded);
-      showSaveToast([markdownFile]);
+      setStatus(t.zipDownloaded);
+      showBlobSaveToast(zipFile, t.zipSavedToastTitle);
     } finally {
       finishSaveAction();
     }
   }
 
-  async function downloadBoth() {
+  async function saveToDirectory() {
     if (isSaving) return;
-    if (!yamlText) {
+    if (!canUseFolderSave || !directoryHandle) {
+      setStatus(t.folderUnsupported);
+      return;
+    }
+    if (!yamlText.trim() && !conversationLog.trim()) {
       setStatus(t.createOrPasteFirst);
       return;
     }
+
     await beginSaveAction();
     try {
+      const generated = !yamlText.trim() ? generateArchiveFromConversation() : null;
+      const sourceYamlText = yamlText.trim() ? yamlText : generated?.nextYaml;
+      const sourceMarkdownText = sourceLogText.trim() ? sourceLogText : generated?.nextSourceLog;
+      if (!sourceYamlText || !sourceMarkdownText) {
+        setStatus(t.needYamlAndMarkdown);
+        return;
+      }
+
       let yamlFile: PreparedTextFile;
+      let markdownFile: PreparedTextFile;
       try {
-        yamlFile = buildYamlFile(yamlText, sourceInfo);
-        downloadTextFile(yamlFile.filename, yamlFile.content, yamlFile.mimeType);
+        const prepared = prepareArchivePair(sourceYamlText, sourceMarkdownText);
+        yamlFile = prepared.yamlFile;
+        markdownFile = prepared.markdownFile;
       } catch {
         setStatus(t.emptyContent);
         return;
       }
-      setYamlText(yamlFile.content);
-      if (sourceLogText.trim()) {
-        let markdownFile: PreparedTextFile;
-        try {
-          markdownFile = buildMarkdownFile(sourceLogText, sourceInfo, yamlFile.content);
-          downloadTextFile(markdownFile.filename, markdownFile.content, markdownFile.mimeType);
-        } catch {
-          setStatus(t.emptyContent);
-          return;
-        }
-        setSourceLogText(markdownFile.content);
-        setSourceLogFilename(markdownFile.filename);
-        setStatus(t.bothDownloaded);
-        showSaveToast([yamlFile, markdownFile]);
+
+      if (!(await ensureDirectoryPermission(directoryHandle))) {
+        setStatus(t.folderPermissionDenied);
         return;
       }
-      setStatus(t.memoDownloadedNoLog);
-      showSaveToast([yamlFile]);
+      const monthFolder = formatMarkdownTimestamp().slice(0, 7);
+      let yamlEmpty = false;
+      try {
+        yamlEmpty = await saveTextFileToDirectory(directoryHandle, yamlFile.filename, yamlFile.content, monthFolder, yamlFile.mimeType);
+      } catch {
+        setStatus(t.folderSaveFailedFile(yamlFile.filename));
+        return;
+      }
+      try {
+        if (yamlEmpty) {
+          setStatus(`${t.folderSaveFailedFile(yamlFile.filename)}\n\n${t.zeroByteWarning}`);
+          return;
+        }
+        const markdownEmpty = await saveTextFileToDirectory(
+          directoryHandle,
+          markdownFile.filename,
+          markdownFile.content,
+          monthFolder,
+          markdownFile.mimeType,
+        );
+        if (markdownEmpty) {
+          setStatus(`${t.folderSaveFailedFile(markdownFile.filename)}\n\n${t.zeroByteWarning}`);
+          return;
+        }
+      } catch {
+        setStatus(t.folderSaveFailedFile(markdownFile.filename));
+        return;
+      }
+
+      setYamlText(yamlFile.content);
+      setSourceLogText(markdownFile.content);
+      setSourceLogFilename(markdownFile.filename);
+      setStatus(t.savedBothToFolder(formatMarkdownTimestamp().slice(0, 7), yamlFile.filename, markdownFile.filename));
+      setSaveToast({
+        title: t.folderSavedToastTitle,
+        filenames: [yamlFile.filename, markdownFile.filename],
+      });
     } finally {
       finishSaveAction();
     }
@@ -1625,7 +1744,40 @@ export default function HandoffMemoTool() {
 
           {activeInputTab !== "prompt" && (
             <div className="flex flex-wrap items-start gap-3">
-              {supportsDirectoryPicker === true ? (
+              <div className="min-w-[220px]">
+                <button
+                  type="button"
+                  onClick={saveZip}
+                  disabled={!canSaveZip || isSaving}
+                  className="h-11 rounded-md bg-teal-700 px-5 text-sm font-bold text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+                >
+                  {isSaving ? t.saving : t.saveZip}
+                </button>
+                <p className="mt-1 text-xs font-medium text-stone-500">{t.saveZipHelp}</p>
+              </div>
+              <div className="min-w-[160px]">
+                <button
+                  type="button"
+                  onClick={saveYaml}
+                  disabled={isSaving}
+                  className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:text-stone-400"
+                >
+                  {isSaving ? t.saving : t.saveYaml}
+                </button>
+                <p className="mt-1 text-xs font-medium text-stone-500">{t.downloadHelp}</p>
+              </div>
+              <div className="min-w-[180px]">
+                <button
+                  type="button"
+                  onClick={saveMarkdown}
+                  disabled={!canDownloadSourceLog || isSaving}
+                  className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:text-stone-400"
+                >
+                  {isSaving ? t.saving : t.saveMarkdown}
+                </button>
+                <p className="mt-1 text-xs font-medium text-stone-500">{t.sourceOutputTab}</p>
+              </div>
+              {canUseFolderSave ? (
                 <>
                   <button
                     type="button"
@@ -1638,7 +1790,7 @@ export default function HandoffMemoTool() {
                   <div className="min-w-[180px]">
                     <button
                       type="button"
-                      onClick={save}
+                      onClick={saveToDirectory}
                       disabled={!directoryHandle || isSaving}
                       className="h-11 rounded-md bg-stone-950 px-5 text-sm font-bold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
                     >
@@ -1647,22 +1799,11 @@ export default function HandoffMemoTool() {
                     <p className="mt-1 text-xs font-medium text-stone-500">{t.saveToFolderHelp}</p>
                   </div>
                 </>
-              ) : supportsDirectoryPicker === false ? (
+              ) : !isMobile ? (
                 <p className="min-h-11 rounded-md border border-stone-300 bg-stone-50 px-4 py-3 text-sm font-bold text-stone-600">
                   {t.folderUnsupported}
                 </p>
               ) : null}
-              <div className="min-w-[220px]">
-                <button
-                  type="button"
-                  onClick={download}
-                  disabled={isSaving}
-                  className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:text-stone-400"
-                >
-                  {isSaving ? t.saving : t.download}
-                </button>
-                <p className="mt-1 text-xs font-medium text-stone-500">{t.downloadHelp}</p>
-              </div>
               {activeInputTab === "memo-create" && (
                 <label className="flex h-11 items-center gap-2 rounded-md border border-stone-300 bg-white px-4 text-sm font-bold">
                   <input
@@ -1685,30 +1826,6 @@ export default function HandoffMemoTool() {
                   {t.alsoSaveLog}
                 </label>
               )}
-              {canDownloadSourceLog && (
-                <>
-                  <button
-                    type="button"
-                    onClick={downloadSourceLog}
-                    disabled={isSaving}
-                    className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:text-stone-400"
-                  >
-                    {isSaving ? t.saving : t.downloadLog}
-                  </button>
-                </>
-              )}
-              {canDownloadBoth && (
-                <>
-                  <button
-                    type="button"
-                    onClick={downloadBoth}
-                    disabled={isSaving}
-                    className="h-11 rounded-md border border-stone-300 bg-white px-5 text-sm font-bold hover:bg-stone-50 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:text-stone-400"
-                  >
-                    {isSaving ? t.saving : t.downloadBoth}
-                  </button>
-                </>
-              )}
             </div>
           )}
 
@@ -1716,14 +1833,16 @@ export default function HandoffMemoTool() {
             <div className="rounded-md border border-stone-200 bg-white p-4 text-sm text-stone-700">
               <p className="font-semibold text-stone-950">{t.destination}</p>
               <p className="mt-1 font-bold text-stone-950">
-                {supportsDirectoryPicker === false
-                  ? t.folderUnsupported
+                {!canUseFolderSave
+                  ? isMobile
+                    ? t.folderMobileHidden
+                    : t.folderUnsupported
                   : directoryHandle
                     ? directoryName || t.selectedFolder
                     : t.notSelected}
               </p>
               <p className="mt-1">
-                {supportsDirectoryPicker === false
+                {!canUseFolderSave
                   ? t.downloadFallback
                   : directoryHandle
                   ? activeInputTab === "log-save"
